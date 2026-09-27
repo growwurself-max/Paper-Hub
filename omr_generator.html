@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic OMR Generator</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #f0f2f5; }
+        .controls { 
+            background: white; padding: 20px; border-radius: 8px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 600px; margin: 0 auto 30px;
+            display: flex; flex-direction: column; gap: 15px;
+        }
+        .control-group { display: flex; align-items: center; gap: 10px; }
+        select, input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        button { 
+            padding: 10px 20px; background: #007bff; color: white; 
+            border: none; border-radius: 4px; cursor: pointer; font-weight: bold;
+        }
+        button:hover { background: #0056b3; }
+        
+        #preview-container { display: flex; justify-content: center; }
+        iframe { 
+            width: 210mm; height: 297mm; border: 1px solid #ddd; 
+            background: white; box-shadow: 0 0 20px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <h2 style="margin-top:0">OMR Configuration</h2>
+        <div class="control-group">
+            <label>Exam Pattern:</label>
+            <select id="pattern">
+                <option value="EAMCET">EAMCET (160 Qs)</option>
+                <option value="NEET">NEET (180 Qs)</option>
+                <option value="JEE">JEE Main (90 Qs)</option>
+                <option value="CUSTOM">Custom</option>
+            </select>
+        </div>
+        <div id="custom-q-count" class="control-group" style="display:none;">
+            <label>Total Questions:</label>
+            <input type="number" id="qCount" value="160">
+        </div>
+        <div class="control-group">
+            <label>Sheet Type:</label>
+            <select id="sheetType">
+                <option value="STUDENT">Student Answer Sheet</option>
+                <option value="MASTER">Master Answer Key</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>Institution:</label>
+            <input type="text" id="instName" value="ABC JUNIOR COLLEGE">
+        </div>
+        <div class="control-group">
+            <label>Test Title:</label>
+            <input type="text" id="testTitle" value="MOCK TEST 01">
+        </div>
+        <button id="genBtn">Generate & Preview</button>
+        <button id="printBtn" style="background: #28a745;">Print / Save PDF</button>
+    </div>
+
+    <div id="preview-container">
+        <iframe id="omrFrame"></iframe>
+    </div>
+
+    <script>
+        const patternSelect = document.getElementById('pattern');
+        const customDiv = document.getElementById('custom-q-count');
+        const qInput = document.getElementById('qCount');
+        const genBtn = document.getElementById('genBtn');
+        const printBtn = document.getElementById('printBtn');
+        const omrFrame = document.getElementById('omrFrame');
+
+        patternSelect.addEventListener('change', function() {
+            if (this.value === 'CUSTOM') {
+                customDiv.style.display = 'flex';
+            } else {
+                customDiv.style.display = 'none';
+                const counts = { 'EAMCET': 160, 'NEET': 180, 'JEE': 90 };
+                qInput.value = counts[this.value];
+            }
+        });
+
+        function generateOMR() {
+            const config = {
+                instName: document.getElementById('instName').value,
+                testTitle: document.getElementById('testTitle').value,
+                pattern: patternSelect.value,
+                qCount: parseInt(qInput.value) || 160,
+                sheetType: document.getElementById('sheetType').value
+            };
+
+            const html = `<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        @page { size: A4; margin: 0; }
+        body { font-family: 'Arial', sans-serif; margin: 0; padding: 0; color: #000; }
+        .page { width: 210mm; height: 297mm; margin: auto; position: relative; padding: 8mm 10mm; box-sizing: border-box; overflow: hidden; }
+        .marker { position: absolute; width: 8mm; height: 8mm; background-color: black; }
+        .top-left { top: 5mm; left: 5mm; } .top-right { top: 5mm; right: 5mm; }
+        .bottom-left { bottom: 5mm; left: 5mm; } .bottom-right { bottom: 5mm; right: 5mm; }
+        .header { text-align: center; margin-bottom: 8px; }
+        .institution-name { font-size: 22pt; font-weight: bold; text-transform: uppercase; margin: 0; }
+        .test-title { font-size: 16pt; font-weight: bold; margin: 3px 0; }
+        .subtitle { font-size: 13pt; text-transform: uppercase; margin: 1px 0; }
+        .details-bar { border: 2px solid black; padding: 4px; margin-top: 4px; font-weight: bold; font-size: 11pt; text-align: center; }
+        .details-container { display: flex; justify-content: space-between; margin: 8px 0; font-size: 11pt; line-height: 1.6; }
+        .detail-group { width: 48%; }
+        .underline { border-bottom: 1px solid black; display: inline-block; width: 220px; vertical-align: bottom; }
+        .instructions { border: 1px solid black; padding: 6px; margin-bottom: 8px; font-size: 8.5pt; }
+        .instructions h3 { margin: 0 0 2px 0; font-size: 9pt; text-decoration: underline; text-transform: uppercase; }
+        .omr-container { border: 2px solid black; padding: 6px; display: flex; justify-content: space-between; gap: 6px; }
+        .column { width: 24%; }
+        .question-row { display: flex; align-items: center; margin-bottom: 2px; font-size: 8pt; height: 15px; }
+        .q-num { width: 18px; text-align: right; margin-right: 5px; font-weight: bold; }
+        .options { display: flex; gap: 4px; }
+        .bubble { width: 13px; height: 13px; border: 1px solid black; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 6pt; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="marker top-left"></div> <div class="marker top-right"></div>
+        <div class="marker bottom-left"></div> <div class="marker bottom-right"></div>
+        <div class="header">
+            <div class="institution-name">${config.instName}</div>
+            <div class="test-title">${config.testTitle}</div>
+            <div class="subtitle">${config.sheetType === 'MASTER' ? 'MASTER ANSWER KEY' : 'OMR ANSWER SHEET'}</div>
+            <div class="details-bar">Total Questions: ${config.qCount} | Total Marks: ${config.qCount} | Time: 180 Minutes</div>
+        </div>
+        ${config.sheetType === 'STUDENT' ? \`
+        <div class="details-container">
+            <div class="detail-group">
+                <div>Exam: \${config.testTitle}</div>
+                <div>Roll Number: <span class="underline"></span></div>
+            </div>
+            <div class="detail-group" style="text-align: right;">
+                <div>Candidate name: <span class="underline"></span></div>
+                <div>Class / Section: <span class="underline"></span></div>
+            </div>
+        </div>
+        <div class="instructions">
+            <h3>Instructions:</h3>
+            <ol>
+                <li>Fill the bubbles completely with a black/blue ballpoint pen.</li>
+                <li>Use only the provided options. Do not write or mark outside the circles.</li>
+            </ol>
+        </div>\` : '<div style="height: 60px; text-align: center; font-style: italic; font-size: 12pt;">Authorized for Faculty Use Only - Confidential Master Key</div>'}
+        <div class="omr-container" id="grid"></div>
+    </div>
+    <script>
+        const grid = document.getElementById('grid');
+        const options = ['A', 'B', 'C', 'D'];
+        const totalQ = ${config.qCount};
+        const cols = 4;
+        const perCol = Math.ceil(totalQ / cols);
+        
+        for (let c = 0; c < cols; c++) {
+            const colDiv = document.createElement('div');
+            colDiv.className = 'column';
+            const start = c * perCol + 1;
+            const end = Math.min((c + 1) * perCol, totalQ);
+            for (let q = start; q <= end; q++) {
+                const row = document.createElement('div');
+                row.className = 'question-row';
+                row.innerHTML = '<div class="q-num">' + q + '</div><div class="options">' + options.map(o => '<div class="bubble">' + o + '</div>').join('') + '</div>';
+                colDiv.appendChild(row);
+            }
+            grid.appendChild(colDiv);
+        }
+    <\/script>
+</body>
+</html>`;
+            
+            omrFrame.srcdoc = html;
+        }
+
+        genBtn.addEventListener('click', generateOMR);
+        printBtn.addEventListener('click', () => omrFrame.contentWindow.print());
+        window.onload = generateOMR;
+    </script>
+</body>
+</html>

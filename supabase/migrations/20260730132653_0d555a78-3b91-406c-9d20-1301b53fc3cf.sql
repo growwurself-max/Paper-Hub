@@ -1,0 +1,1 @@
+TRUNCATE TABLE public.audit_logs, public.ai_usage, public.generated_papers, public.uploaded_syllabi, public.templates, public.subjects, public.classes, public.boards_exams, public.user_roles, public.profiles, public.organizations RESTART IDENTITY CASCADE;

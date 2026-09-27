@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMR Answer Sheet - EAMCET Mock Test 01</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 0;
+        }
+        body {
+            font-family: 'Arial', 'Helvetica', sans-serif;
+            margin: 0;
+            padding: 0;
+            color: #000;
+            background-color: #fff;
+        }
+        .page {
+            width: 210mm;
+            height: 297mm;
+            margin: auto;
+            position: relative;
+            padding: 15mm 12mm;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        /* Alignment Markers */
+        .marker {
+            position: absolute;
+            width: 8mm;
+            height: 8mm;
+            background-color: black;
+        }
+        .top-left { top: 5mm; left: 5mm; }
+        .top-right { top: 5mm; right: 5mm; }
+        .bottom-left { bottom: 5mm; left: 5mm; }
+        .bottom-right { bottom: 5mm; right: 5mm; }
+
+        /* Header Section */
+        .header {
+            text-align: center;
+            margin-bottom: 15px;
+        }
+        .institution-name {
+            font-size: 22pt;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin: 0;
+            letter-spacing: 1px;
+        }
+        .test-title {
+            font-size: 16pt;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+        .subtitle {
+            font-size: 13pt;
+            font-weight: normal;
+            margin: 2px 0;
+            text-transform: uppercase;
+        }
+        .details-bar {
+            border: 2px solid black;
+            padding: 6px;
+            margin-top: 10px;
+            font-weight: bold;
+            font-size: 11pt;
+            display: inline-block;
+            width: 100%;
+            box-sizing: border-box;
+            text-align: center;
+        }
+
+        /* Candidate Details */
+        .details-container {
+            display: flex;
+            justify-content: space-between;
+            margin: 15px 0;
+            font-size: 11pt;
+            line-height: 2;
+        }
+        .detail-group {
+            width: 48%;
+        }
+        .detail-item {
+            margin-bottom: 5px;
+        }
+        .underline {
+            border-bottom: 1px solid black;
+            display: inline-block;
+            width: 220px;
+            vertical-align: bottom;
+        }
+
+        /* Instructions */
+        .instructions {
+            border: 1px solid black;
+            padding: 10px;
+            margin-bottom: 15px;
+            font-size: 10pt;
+        }
+        .instructions h3 {
+            margin: 0 0 5px 0;
+            font-size: 11pt;
+            text-decoration: underline;
+            text-transform: uppercase;
+        }
+        .instructions ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+
+        /* OMR Grid */
+        .omr-container {
+            border: 2px solid black;
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+        }
+        .column {
+            width: 24%;
+        }
+        .question-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+            font-size: 9pt;
+            height: 18px;
+        }
+        .q-num {
+            width: 22px;
+            text-align: right;
+            margin-right: 8px;
+            font-weight: bold;
+        }
+        .options {
+            display: flex;
+            gap: 6px;
+        }
+        .bubble {
+            width: 15px;
+            height: 15px;
+            border: 1px solid black;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 7pt;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <!-- Alignment Markers -->
+        <div class="marker top-left"></div>
+        <div class="marker top-right"></div>
+        <div class="marker bottom-left"></div>
+        <div class="marker bottom-right"></div>
+
+        <!-- Header Section -->
+        <div class="header">
+            <div class="institution-name">ABC JUNIOR COLLEGE</div>
+            <div class="test-title">EAMCET MOCK TEST 01</div>
+            <div class="subtitle">OMR ANSWER SHEET</div>
+            <div class="details-bar">
+                Total Questions: 160 | Total Marks: 160 | Time: 180 Minutes
+            </div>
+        </div>
+
+        <!-- Candidate Details -->
+        <div class="details-container">
+            <div class="detail-group">
+                <div class="detail-item">Exam: EAMCET Mock Test 01</div>
+                <div class="detail-item">Roll Number: <span class="underline"></span></div>
+            </div>
+            <div class="detail-group" style="text-align: right;">
+                <div class="detail-item">Candidate name: <span class="underline"></span></div>
+                <div class="detail-item">Class / Section: <span class="underline"></span></div>
+            </div>
+        </div>
+
+        <!-- Instructions -->
+        <div class="instructions">
+            <h3>Instructions:</h3>
+            <ol>
+                <li>Fill the bubbles completely with a black/blue ballpoint pen.</li>
+                <li>Use only the provided options. Do not write or mark outside the circles.</li>
+            </ol>
+        </div>
+
+        <!-- OMR Grid -->
+        <div class="omr-container" id="omrGrid">
+            <!-- Generated by JS -->
+        </div>
+    </div>
+
+    <script>
+        const grid = document.getElementById('omrGrid');
+        const options = ['A', 'B', 'C', 'D'];
+        
+        for (let col = 0; col < 4; col++) {
+            const columnDiv = document.createElement('div');
+            columnDiv.className = 'column';
+            
+            const startQ = col * 40 + 1;
+            const endQ = (col + 1) * 40;
+            
+            for (let q = startQ; q <= endQ; q++) {
+                const row = document.createElement('div');
+                row.className = 'question-row';
+                
+                const qNum = document.createElement('div');
+                qNum.className = 'q-num';
+                qNum.innerText = q;
+                
+                const optsDiv = document.createElement('div');
+                optsDiv.className = 'options';
+                
+                options.forEach(opt => {
+                    const bubble = document.createElement('div');
+                    bubble.className = 'bubble';
+                    bubble.innerText = opt;
+                    optsDiv.appendChild(bubble);
+                });
+                
+                row.appendChild(qNum);
+                row.appendChild(optsDiv);
+                columnDiv.appendChild(row);
+            }
+            grid.appendChild(columnDiv);
+        }
+    </script>
+</body>
+</html>
