@@ -202,7 +202,11 @@ function PaperView() {
   };
 
   return (
-    <div className="min-h-screen px-4 py-8 sm:px-8 print:bg-white print:p-0">
+    <div
+      className={`min-h-screen px-4 py-8 sm:px-8 print:bg-white print:p-0 ${
+        view === "omr" ? "omr-print-root" : ""
+      }`}
+    >
       {/* The paper gets the full landscape page width; the answer key and the OMR
           sheet stay in the narrow reading column. */}
       <div className={`mx-auto max-w-4xl ${view === "paper" ? "paper-wrap" : ""}`}>

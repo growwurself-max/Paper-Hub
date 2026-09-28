@@ -22,19 +22,18 @@ export function OmrSheet(props: OmrSheetProps) {
     const layout = buildOmrLayout(JSON.parse(signature) as OmrSheetProps);
     canvas.width = Math.round(layout.page.width * PREVIEW_SCALE);
     canvas.height = Math.round(layout.page.height * PREVIEW_SCALE);
-    ctx.save();
-    ctx.scale(PREVIEW_SCALE, PREVIEW_SCALE);
-    drawOmrLayout(ctx, layout);
-    ctx.restore();
+    // drawOmrLayout applies PREVIEW_SCALE itself; pre-scaling the context here
+    // would be discarded by the painter's setTransform.
+    drawOmrLayout(ctx, layout, { scale: PREVIEW_SCALE });
   }, [signature]);
 
   return (
-    <div className="overflow-x-auto bg-white text-black print:overflow-visible">
+    <div className="overflow-x-auto bg-white text-black print:overflow-visible omr-print-page">
       <canvas
         ref={canvasRef}
         role="img"
         aria-label={props.mode === "key" ? "Bubbled OMR answer key" : "OMR answer sheet"}
-        className="block h-auto w-full print:h-auto print:w-[210mm]"
+        className="omr-sheet-canvas block h-auto w-full"
       />
     </div>
   );

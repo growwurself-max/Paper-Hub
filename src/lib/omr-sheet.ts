@@ -777,10 +777,24 @@ function drawFooter(ctx: CanvasRenderingContext2D, layout: OmrLayout) {
   ctx.fillText(footer.right, content.x + content.width, footer.textY);
 }
 
-/** Paint a layout model onto any 2D context, in page coordinates. */
-export function drawOmrLayout(ctx: CanvasRenderingContext2D, layout: OmrLayout) {
+/**
+ * Paint a layout model onto any 2D context, in page coordinates.
+ *
+ * `scale` is device pixels per layout unit, and the painter applies it itself
+ * via `setTransform`. The transform has to be set here rather than by the
+ * caller: a caller that pre-scales the context has that scale silently thrown
+ * away, which paints the sheet 1:1 into the top-left corner of an
+ * already-oversized canvas. Every measurement below stays in page units, so the
+ * scanner calibration is identical at every scale.
+ */
+export function drawOmrLayout(
+  ctx: CanvasRenderingContext2D,
+  layout: OmrLayout,
+  options: { scale?: number } = {},
+) {
+  const scale = options.scale ?? 1;
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.textBaseline = "alphabetic";
   ctx.textAlign = "left";
   ctx.fillStyle = "#ffffff";
@@ -819,10 +833,9 @@ export function renderOmrSheetCanvas(
   if (!ctx) {
     throw new Error("This browser blocked the 2D canvas, so the OMR sheet cannot be drawn.");
   }
-  ctx.save();
-  ctx.scale(scale, scale);
-  drawOmrLayout(ctx, layout);
-  ctx.restore();
+  // The painter sets the transform from `scale` itself; pre-scaling here would
+  // be redundant and is exactly what used to be silently discarded.
+  drawOmrLayout(ctx, layout, { scale });
   return canvas;
 }
 

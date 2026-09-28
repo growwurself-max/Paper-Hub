@@ -199,6 +199,33 @@
 }
 
 /*
+ * Printed OMR sheet.
+ *
+ * Named for the same reason as `examlandscape` above: a bare `@page` rule would
+ * also apply to the question paper and rotate it. The zero margin is the part
+ * that matters here — the sheet is a full-bleed 210x297mm master, so the
+ * browser's default printable area would shrink it and push it onto a second
+ * page. The sheet carries its own calibration frame and must print at exactly
+ * 1:1, which means the page box has to be exactly A4 with nothing around it.
+ */
+@page omrportrait {
+  size: A4 portrait;
+  margin: 0;
+}
+
+/* Holds the sheet on a single page; a split sheet is uncalibratable. */
+.omr-print-page {
+  page: omrportrait;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.omr-sheet-canvas {
+  display: block;
+  margin: 0;
+}
+
+/*
  * Sized to the landscape text block, so printing is not narrowed by the
  * reading-width wrapper the other views use.
  */
@@ -327,6 +354,50 @@
   .paper-sheet footer {
     margin-top: 0.5rem;
   }
+
+  /*
+   * OMR sheet, full page.
+   *
+   * The screen layout is a comfortable reading column centred in a viewport,
+   * and every part of it is wrong on paper: the page padding and the auto
+   * margins inset the sheet, and `min-height: 100vh` resolves against the page
+   * box, so a sheet that exactly fills the page rounds over into a blank second
+   * page. All of it is stripped here and the sheet is given the page box
+   * outright. The class is applied to the route root only while the OMR view is
+   * active, so the question paper and answer key keep their own print rules.
+   */
+  .omr-print-root {
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* Drop the reading-column wrapper: max-width and centring shrink the sheet. */
+  .omr-print-root > div {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  /*
+   * Explicit page dimensions rather than percentages: a percentage height
+   * cannot resolve against these auto-height ancestors, and `object-fit` then
+   * has no box to fit inside. `contain` keeps the bitmap at its native aspect
+   * ratio, so the corner fiducials stay square and the sheet can never warp
+   * even if the browser substitutes a different paper size.
+   */
+  .omr-print-page {
+    width: 210mm;
+    height: 297mm;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+  }
+
+  .omr-sheet-canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
 }
-
-
