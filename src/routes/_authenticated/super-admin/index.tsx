@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { motion } from "framer-motion";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { BrandLogo } from "@/components/BrandLogo";
 import { useSession } from "@/lib/useSession";
 import {
   getPlatformLimits,
@@ -59,12 +60,15 @@ function SuperAdminHome() {
 
   return (
     <div className="min-h-screen px-4 py-8 sm:px-8">
-      <header className="mx-auto flex max-w-6xl items-center justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-widest text-accent">
-            Platform administration
-          </p>
-          <h1 className="text-2xl font-bold">Super Admin</h1>
+      <header className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <BrandLogo height="sm" />
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-widest text-accent">
+              Platform administration
+            </p>
+            <h1 className="text-2xl font-bold">Super Admin</h1>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <Link

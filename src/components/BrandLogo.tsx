@@ -7,16 +7,20 @@ import { cn } from "@/lib/utils";
  * copying this file into the Result Hub app, which shares the same mark) never
  * requires touching a call site.
  */
-export const BRAND_LOGO_SRC = "/assets/logo.jpeg";
-
-/** Intrinsic size of the asset, so the browser reserves the right box up front. */
-const INTRINSIC_WIDTH = 495;
-const INTRINSIC_HEIGHT = 198;
+export const BRAND_LOGO_SRC = "/assets/logo.png";
 
 /**
- * The mark is a 2.5:1 wordmark, so height alone drives the rendered width
- * (h-12 -> 120px wide, h-16 -> 160px). Anything below h-8 makes the baked-in
- * "by Groww Tech" text too small to read.
+ * Intrinsic size of the asset, so the browser reserves the right box up front
+ * and the wordmark cannot reflow the header as it decodes.
+ */
+const INTRINSIC_WIDTH = 2005;
+const INTRINSIC_HEIGHT = 421;
+
+/**
+ * The mark is a wide wordmark (4.76:1), so height alone drives the rendered
+ * width (h-8 -> ~152px wide, h-12 -> ~228px, h-16 -> ~305px). Widths are left
+ * to the aspect ratio so a future swap to a differently-proportioned asset does
+ * not squash the mark.
  */
 const HEIGHT_CLASSES = {
   sm: "h-8",
