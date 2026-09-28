@@ -159,15 +159,29 @@ export function buildAnswerKey(
 }
 
 /**
- * The OMR-readable subset of the key.
+ * The OMR-readable subset of the key, renumbered to OMR row order.
  *
  * Only multiple-choice questions are bubbled on an OMR sheet, so numeric,
  * short and long questions are excluded: including them would produce entries
  * with no option letter that an OMR reader could never match.
+ *
+ * The surviving questions are then renumbered 1..N. This matters whenever a
+ * paper mixes question types. The full key numbers *every* question, so on a
+ * banded paper with a descriptive question at printed position 2 the MCQ
+ * entries come back as 1, 3, 4 - but the OMR grid lays its rows out as a plain
+ * 1..N run and looks the key up by that row number. Bubbling the unrenumbered
+ * key would leave row 2 empty and shift every later answer onto the wrong row.
+ * Renumbering here keeps the painted key aligned with the row it is read from.
+ *
+ * Printed order is preserved, so the Nth OMR row is still the Nth MCQ the
+ * candidate meets on the paper; only the number changes, from the paper's
+ * printed number to the OMR row it is answered in.
  */
 export function buildOmrAnswerKey(
   questions: KeyableQuestion[],
   sections: SubjectSection[] = [],
 ): AnswerKeyEntry[] {
-  return buildAnswerKey(questions, sections).filter((entry) => entry.type === "mcq");
+  return buildAnswerKey(questions, sections)
+    .filter((entry) => entry.type === "mcq")
+    .map((entry, index) => ({ ...entry, questionNumber: index + 1 }));
 }

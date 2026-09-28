@@ -159,6 +159,11 @@ function PaperView() {
   const shorts = questions.filter((q) => q.type === "short");
   const longs = questions.filter((q) => q.type === "long");
 
+  // An OMR sheet can only bubble multiple-choice questions, so a paper with no
+  // MCQs has nothing to lay out. Offering the tab anyway would paint an empty
+  // grid that reads as a broken sheet rather than an absent one.
+  const omrAvailable = mcqs.length > 0;
+
   // Subject bands declared at generation time (EAMCET: 1-40 Physics,
   // 41-80 Chemistry, 81-160 Mathematics). Older papers have none, in which
   // case printing falls back to the type sections they were always grouped by.
@@ -182,7 +187,9 @@ function PaperView() {
     duration: header.duration,
     examDate: typeof cfg.examDate === "string" ? cfg.examDate : undefined,
     maxMarks: mcqs.reduce((sum, question) => sum + (Number(question.marks) || 0), 0),
-    questionCount: Math.max(mcqs.length, 1),
+    // Exactly the MCQs on the sheet - no minimum padding, so the grid can never
+    // grow a row that no question corresponds to.
+    questionCount: mcqs.length,
     optionCount: Math.min(6, Math.max(4, ...mcqs.map((question) => question.options?.length ?? 0))),
     negativeMarking: Number(cfg.negativeMarking || 0),
     answerKey: mode === "key" ? buildOmrAnswerKey(questions, subjectSections) : undefined,
@@ -215,17 +222,19 @@ function PaperView() {
             ← Back to papers
           </Link>
           <div className="flex flex-wrap gap-2">
-            {(["paper", "answers", "omr"] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`rounded-lg border px-3 py-1.5 text-sm transition ${
-                  view === v ? "border-primary bg-primary/10" : "border-border hover:bg-card"
-                }`}
-              >
-                {v === "paper" ? "Question paper" : v === "answers" ? "Answer key" : "OMR sheet"}
-              </button>
-            ))}
+            {(["paper", "answers", ...(omrAvailable ? (["omr"] as const) : [])] as const).map(
+              (v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`rounded-lg border px-3 py-1.5 text-sm transition ${
+                    view === v ? "border-primary bg-primary/10" : "border-border hover:bg-card"
+                  }`}
+                >
+                  {v === "paper" ? "Question paper" : v === "answers" ? "Answer key" : "OMR sheet"}
+                </button>
+              ),
+            )}
             <button
               onClick={() => setEditing((e) => !e)}
               className={`rounded-lg border px-3 py-1.5 text-sm transition ${
@@ -394,7 +403,7 @@ function PaperView() {
           </div>
         ) : null}
 
-        {view === "omr" ? (
+        {view === "omr" && omrAvailable ? (
           <div className="w-full bg-white print:rounded-none print:shadow-none">
             <OmrSheet {...omrProps(omrPreview)} />
           </div>
