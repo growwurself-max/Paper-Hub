@@ -43,7 +43,6 @@ export type OmrBubble = {
 
 export type OmrRow = {
   questionNumber: number;
-  serial: number;
   y: number;
   /** The key has an entry for this number but no resolvable option letter. */
   unresolved: boolean;
@@ -377,7 +376,6 @@ export function buildOmrLayout(props: OmrSheetProps): OmrLayout {
       const answer = keyLetters.get(questionNumber);
       columnRows.push({
         questionNumber,
-        serial: questionNumber,
         y,
         unresolved: mode === "key" && answer === "",
       });
@@ -684,12 +682,9 @@ function drawGrid(ctx: CanvasRenderingContext2D, layout: OmrLayout) {
 
     ctx.textBaseline = "middle";
     for (const row of column.rows) {
-      if (grid.rowHeight >= 19) {
-        setFont(ctx, 7.5, 400);
-        ctx.fillStyle = SUBTLE;
-        ctx.textAlign = "left";
-        ctx.fillText(String(row.serial), column.x + 1, row.y);
-      }
+      // One number per row, right-aligned in the Q.No. column. A second, fainter
+      // copy used to be drawn here for tall rows, but it was always the same
+      // value, so it just read as a smudge beside the real one.
       setFont(ctx, 11, 700);
       ctx.fillStyle = INK;
       ctx.textAlign = "right";

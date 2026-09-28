@@ -20,15 +20,18 @@ const BASE: OmrSheetProps = {
 
 type Rect = { x: number; y: number; w: number; h: number; t: number[] };
 type Arc = { cx: number; cy: number; r: number; t: number[] };
+type Text = { text: string; x: number; y: number; t: number[] };
 
 /**
  * A 2D context that records the device-space extent of what was drawn, which
  * is the only thing that matters here: whether the ink covers the bitmap it is
- * painted onto, and where each bubble actually lands.
+ * painted onto, where each bubble actually lands, and what text is printed on
+ * top of it.
  */
 function recordingContext() {
   const rects: Rect[] = [];
   const arcs: Arc[] = [];
+  const texts: Text[] = [];
   let m = [1, 0, 0, 1, 0, 0];
 
   const base: Record<string, unknown> = {
@@ -43,7 +46,9 @@ function recordingContext() {
     stroke() {},
     fill() {},
     clip() {},
-    fillText() {},
+    fillText(text: string, x: number, y: number) {
+      texts.push({ text, x, y, t: [...m] });
+    },
     strokeText() {},
     measureText: () => ({ width: 0 }),
     setTransform(a: number, b: number, c: number, d: number, e: number, f: number) {
@@ -66,7 +71,7 @@ function recordingContext() {
     set: () => true,
   }) as unknown as CanvasRenderingContext2D;
 
-  return { ctx, rects, arcs };
+  return { ctx, rects, arcs, texts };
 }
 
 /** Device-space bounding box of everything drawn. */
@@ -207,5 +212,110 @@ describe("calibration is scale-invariant", () => {
         );
       }
     }
+  });
+});
+
+describe("question numbering", () => {
+  /** Every text run in the sheet, in page units. */
+  function drawTexts(props: Partial<OmrSheetProps> = {}) {
+    const layout = buildOmrLayout({ ...BASE, ...props });
+    const { ctx, texts } = recordingContext();
+    drawOmrLayout(ctx, layout);
+    return { layout, texts };
+  }
+
+  /**
+   * Text runs that sit on a grid row. Scoping by row baseline matters: the
+   * institute name is painted one character at a time, so a sheet named
+   * "E2E Institute" emits a bare "2" as its own text run.
+   */
+  function numbersOnRows(layout: ReturnType<typeof buildOmrLayout>, texts: Text[]) {
+    const rowYs = new Set(layout.columns.flatMap((c) => c.rows.map((r) => Math.round(r.y * 1000))));
+    return texts.filter((t) => rowYs.has(Math.round(t.y * 1000)));
+  }
+
+  for (const count of [1, 4, 20, 30, 60, 100, 160]) {
+    test(`each of the ${count} question numbers is drawn exactly once`, () => {
+      const { layout, texts } = drawTexts({ questionCount: count });
+      const numbers = numbersOnRows(layout, texts);
+
+      assert.equal(
+        numbers.length,
+        count,
+        `expected ${count} question numbers but drew ${numbers.length}: ${
+          numbers.map((n) => n.text).join(",") || "none"
+        }`,
+      );
+
+      // Exactly the sheet's questions, in order, with no repeats.
+      assert.deepEqual(
+        numbers.map((n) => Number(n.text)),
+        Array.from({ length: count }, (_, i) => i + 1),
+        "the drawn question numbers are not 1..count in ascending order",
+      );
+
+      // One number per cell: columns sit side by side and share row baselines,
+      // so a cell is identified by both x and y. Two numbers in one cell is the
+      // duplicated label this guards against.
+      const cells = new Map<string, string[]>();
+      for (const number of numbers) {
+        const key = `${Math.round(number.x * 1000)}:${Math.round(number.y * 1000)}`;
+        cells.set(key, [...(cells.get(key) ?? []), number.text]);
+      }
+      assert.equal(cells.size, count, "two question numbers share a cell");
+      for (const [key, drawn] of cells) {
+        assert.equal(drawn.length, 1, `cell ${key} drew ${drawn.length} numbers: ${drawn}`);
+      }
+
+      // Each number sits in its own column's Q.No. gutter.
+      const columnXs = new Set(layout.columns.map((c) => Math.round(c.x * 1000)));
+      for (const number of numbers) {
+        const owner = layout.columns.find(
+          (c) => Math.round(c.x * 1000) <= Math.round(number.x * 1000),
+        );
+        assert.ok(owner, "a question number was drawn outside every column");
+        assert.ok(
+          columnXs.has(Math.round(owner.x * 1000)),
+          "a question number was not aligned to a column",
+        );
+      }
+    });
+  }
+
+  test("a tall grid no longer adds a faint second number", () => {
+    // rowHeight is at or above the old 19px threshold for every sheet size, so
+    // the duplicate was never actually conditional - it was always drawn.
+    for (const count of [1, 20, 100, 160]) {
+      const { layout, texts } = drawTexts({ questionCount: count });
+      assert.ok(layout.grid.rowHeight >= 19, `row height unexpectedly dropped at ${count}`);
+      assert.equal(
+        numbersOnRows(layout, texts).length,
+        count,
+        `duplicated numbers at ${count} questions`,
+      );
+    }
+  });
+
+  test("the unresolved marker is still drawn beside its number", () => {
+    const { layout, texts } = drawTexts({
+      questionCount: 3,
+      mode: "key",
+      answerKey: [
+        { questionNumber: 1, correctOption: "A" },
+        { questionNumber: 2, correctOption: "" },
+        { questionNumber: 3, correctOption: "A" },
+      ],
+    });
+    const marks = texts.filter((t) => t.text === "?");
+    assert.equal(marks.length, 1, "expected exactly one unresolved marker");
+    const unresolvedRow = layout.columns.flatMap((c) => c.rows).find((r) => r.unresolved);
+    assert.ok(unresolvedRow, "layout did not flag the unresolved row");
+    assert.equal(marks[0].y, unresolvedRow.y, "the marker is not on the unresolved row");
+  });
+
+  test("the Q.No. header is still drawn once per column", () => {
+    const { layout, texts } = drawTexts({ questionCount: 100 });
+    const headers = texts.filter((t) => t.text === "Q.No.");
+    assert.equal(headers.length, layout.columns.length);
   });
 });
