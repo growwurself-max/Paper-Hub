@@ -1,3 +1,5 @@
+import type { SubjectSection } from "@/lib/paper-sections";
+
 export type ExamPreset = {
   id: string;
   name: string;
@@ -14,6 +16,13 @@ export type ExamPreset = {
   marks: { mcq: number; numeric: number; short: number; long: number };
   negativeMarking: number;
   omr: boolean;
+  /**
+   * Fixed subject bands for exams that pin a subject to an exact run of
+   * question numbers (EAMCET: 1-40 Physics, 41-80 Chemistry, 81-160 Maths).
+   * When present, generation makes one model call per band and the paper
+   * prints the bands in this order.
+   */
+  subjectSections?: SubjectSection[];
   instructions: string;
 };
 
@@ -87,6 +96,11 @@ export const EXAM_PRESETS: ExamPreset[] = [
     marks: { mcq: 1, numeric: 0, short: 0, long: 0 },
     negativeMarking: 0,
     omr: true,
+    subjectSections: [
+      { subject: "Physics", questionCount: 40 },
+      { subject: "Chemistry", questionCount: 40 },
+      { subject: "Mathematics", questionCount: 80 },
+    ],
     instructions:
       "All questions carry 1 mark each. There is no negative marking. Answer on the OMR sheet by darkening the appropriate bubble completely.",
   },

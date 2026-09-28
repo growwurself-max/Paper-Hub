@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { buildAnswerKey, buildOmrAnswerKey, TYPE_ORDER } from "@/lib/answer-key";
+import type { SubjectSection } from "@/lib/paper-sections";
 import type { KeyableQuestion } from "@/lib/answer-key";
 
 /**
@@ -71,7 +72,32 @@ function coerceQuestions(raw: unknown): KeyableQuestion[] {
       question: str(q.question),
       options: Array.isArray(q.options) ? q.options.map((o) => str(o)) : undefined,
       answer: str(q.answer),
+      subject: q.subject == null ? undefined : str(q.subject),
     }));
+}
+
+/**
+ * Accepts a JSONB value that should be a subject-band list.
+ *
+ * Malformed or empty input yields no bands, which keeps an older or hand-edited
+ * paper on its original type-major numbering rather than rejecting the export.
+ * Bands that do not account for every question are dropped for the same reason:
+ * a partial band list would renumber the key, and a key whose numbers disagree
+ * with the printed sheet is worse than one that is merely type-major.
+ */
+function coerceSubjectSections(raw: unknown, questionCount: number): SubjectSection[] {
+  if (!Array.isArray(raw) || questionCount <= 0) return [];
+  const sections = raw.flatMap((entry): SubjectSection[] => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const { subject, questionCount } = entry as { subject?: unknown; questionCount?: unknown };
+    const count = Math.floor(Number(questionCount));
+    if (typeof subject !== "string" || !subject.trim() || !Number.isFinite(count) || count < 1) {
+      return [];
+    }
+    return [{ subject, questionCount: count }];
+  });
+  const covered = sections.reduce((sum, section) => sum + section.questionCount, 0);
+  return covered === questionCount ? sections : [];
 }
 
 export type OmrExamPackage = {
@@ -176,8 +202,11 @@ export const getOmrExamPackage = createServerFn({ method: "GET" })
     }
 
     const questions = coerceQuestions(row.questions);
-    const answerKey = buildAnswerKey(questions);
-    const omrAnswerKey = buildOmrAnswerKey(questions);
+    // A subject-banded paper prints in band order, so the exported key must be
+    // numbered the same way or Q1 in the package would not be Q1 on the sheet.
+    const subjectSections = coerceSubjectSections(cfg.subjectSections, questions.length);
+    const answerKey = buildAnswerKey(questions, subjectSections);
+    const omrAnswerKey = buildOmrAnswerKey(questions, subjectSections);
 
     const rawMarks = (cfg.marks ?? {}) as Record<string, unknown>;
     const questionCounts: Record<string, number> = {};

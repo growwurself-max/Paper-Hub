@@ -5,10 +5,43 @@ import { useEffect, useState } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { getPaper, updatePaper, type GeneratedQuestion } from "@/lib/paper.functions";
 import { getOmrExamPackage, type OmrExamPackage } from "@/lib/omr-package.functions";
-import { buildOmrAnswerKey, inPrintedOrder, resolveAnswerLetter } from "@/lib/answer-key";
+import {
+  buildOmrAnswerKey,
+  inPrintedOrder,
+  keyColumnRows,
+  resolveAnswerLetter,
+} from "@/lib/answer-key";
+import { resolveSectionRanges, type SubjectSection } from "@/lib/paper-sections";
 import { OmrSheet } from "@/components/OmrSheet";
 import { downloadOmrSheetImage, type OmrImageType, type OmrSheetProps } from "@/lib/omr-sheet";
 import { formatExamText } from "@/lib/exam-text";
+
+/**
+ * Read the subject bands back out of a stored paper's config.
+ *
+ * Config is free-form JSON, so anything unrecognised is ignored and the paper
+ * simply renders with its type sections — an unbanded or hand-edited paper must
+ * still open rather than crash.
+ */
+function readSubjectSections(raw: unknown, questionCount: number): SubjectSection[] {
+  if (!Array.isArray(raw) || questionCount <= 0) return [];
+  const sections = raw.flatMap((entry): SubjectSection[] => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const { subject, questionCount: count } = entry as {
+      subject?: unknown;
+      questionCount?: unknown;
+    };
+    const parsed = Math.floor(Number(count));
+    if (typeof subject !== "string" || !subject.trim() || !Number.isFinite(parsed) || parsed < 1) {
+      return [];
+    }
+    return [{ subject, questionCount: parsed }];
+  });
+  // Only treat the paper as banded if the declared counts actually cover every
+  // question, otherwise the printed headings would contradict the paper.
+  const covered = sections.reduce((sum, section) => sum + section.questionCount, 0);
+  return covered === questionCount ? sections : [];
+}
 
 export const Route = createFileRoute("/_authenticated/papers/$id")({
   head: () => ({
@@ -126,6 +159,13 @@ function PaperView() {
   const shorts = questions.filter((q) => q.type === "short");
   const longs = questions.filter((q) => q.type === "long");
 
+  // Subject bands declared at generation time (EAMCET: 1-40 Physics,
+  // 41-80 Chemistry, 81-160 Mathematics). Older papers have none, in which
+  // case printing falls back to the type sections they were always grouped by.
+  const subjectSections = readSubjectSections(cfg.subjectSections, questions.length);
+  const printedOrder = inPrintedOrder(questions, subjectSections);
+  const isBanded = subjectSections.length > 0;
+
   const setQ = (index: number, patch: Partial<GeneratedQuestion>) =>
     setQuestions((prev) => prev.map((q, i) => (i === index ? { ...q, ...patch } : q)));
 
@@ -145,7 +185,7 @@ function PaperView() {
     questionCount: Math.max(mcqs.length, 1),
     optionCount: Math.min(6, Math.max(4, ...mcqs.map((question) => question.options?.length ?? 0))),
     negativeMarking: Number(cfg.negativeMarking || 0),
-    answerKey: mode === "key" ? buildOmrAnswerKey(questions) : undefined,
+    answerKey: mode === "key" ? buildOmrAnswerKey(questions, subjectSections) : undefined,
   });
 
   const downloadOmrKey = () => {
@@ -163,7 +203,9 @@ function PaperView() {
 
   return (
     <div className="min-h-screen px-4 py-8 sm:px-8 print:bg-white print:p-0">
-      <div className="mx-auto max-w-4xl">
+      {/* The paper gets the full landscape page width; the answer key and the OMR
+          sheet stay in the narrow reading column. */}
+      <div className={`mx-auto max-w-4xl ${view === "paper" ? "paper-wrap" : ""}`}>
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3 print:hidden">
           <Link to="/papers" className="text-sm text-muted-foreground hover:underline">
             ← Back to papers
@@ -353,7 +395,11 @@ function PaperView() {
             <OmrSheet {...omrProps(omrPreview)} />
           </div>
         ) : (
-          <article className="rounded-2xl bg-white p-8 text-black shadow-lg print:shadow-none print:rounded-none print:p-0">
+          <article
+            className={`rounded-2xl bg-white p-8 text-black shadow-lg print:shadow-none print:rounded-none print:p-0 ${
+              view === "paper" ? "paper-sheet" : ""
+            }`}
+          >
             <header className="border-b-2 border-black pb-5 text-center">
               {header.collegeName ? (
                 <p className="text-xl font-bold uppercase tracking-[0.12em]">
@@ -393,48 +439,59 @@ function PaperView() {
             </header>
 
             {view === "answers" ? (
-              <AnswerKey questions={questions} />
+              <AnswerKey questions={questions} sections={subjectSections} />
             ) : (
-              <>
-                {mcqs.length > 0 && (
-                  <Section title={`Section A — Multiple Choice (${mcqs.length} questions)`}>
-                    {mcqs.map((q, i) => (
-                      <QuestionBlock key={i} num={i + 1} q={q} showAnswer={false} />
-                    ))}
-                  </Section>
+              <div className="paper-columns">
+                {isBanded ? (
+                  <BandedQuestionBody order={printedOrder} sections={subjectSections} />
+                ) : (
+                  <>
+                    {mcqs.length > 0 && (
+                      <Section title={`Section A — Multiple Choice (${mcqs.length} questions)`}>
+                        {mcqs.map((q, i) => (
+                          <QuestionBlock key={i} num={i + 1} q={q} showAnswer={false} />
+                        ))}
+                      </Section>
+                    )}
+                    {numerics.length > 0 && (
+                      <Section title={`Section B — Numerical Value (${numerics.length} questions)`}>
+                        {numerics.map((q, i) => (
+                          <QuestionBlock
+                            key={i}
+                            num={mcqs.length + i + 1}
+                            q={q}
+                            showAnswer={false}
+                          />
+                        ))}
+                      </Section>
+                    )}
+                    {shorts.length > 0 && (
+                      <Section title={`Section C — Short Answer (${shorts.length} questions)`}>
+                        {shorts.map((q, i) => (
+                          <QuestionBlock
+                            key={i}
+                            num={mcqs.length + numerics.length + i + 1}
+                            q={q}
+                            showAnswer={false}
+                          />
+                        ))}
+                      </Section>
+                    )}
+                    {longs.length > 0 && (
+                      <Section title={`Section D — Long Answer (${longs.length} questions)`}>
+                        {longs.map((q, i) => (
+                          <QuestionBlock
+                            key={i}
+                            num={mcqs.length + numerics.length + shorts.length + i + 1}
+                            q={q}
+                            showAnswer={false}
+                          />
+                        ))}
+                      </Section>
+                    )}
+                  </>
                 )}
-                {numerics.length > 0 && (
-                  <Section title={`Section B — Numerical Value (${numerics.length} questions)`}>
-                    {numerics.map((q, i) => (
-                      <QuestionBlock key={i} num={mcqs.length + i + 1} q={q} showAnswer={false} />
-                    ))}
-                  </Section>
-                )}
-                {shorts.length > 0 && (
-                  <Section title={`Section C — Short Answer (${shorts.length} questions)`}>
-                    {shorts.map((q, i) => (
-                      <QuestionBlock
-                        key={i}
-                        num={mcqs.length + numerics.length + i + 1}
-                        q={q}
-                        showAnswer={false}
-                      />
-                    ))}
-                  </Section>
-                )}
-                {longs.length > 0 && (
-                  <Section title={`Section D — Long Answer (${longs.length} questions)`}>
-                    {longs.map((q, i) => (
-                      <QuestionBlock
-                        key={i}
-                        num={mcqs.length + numerics.length + shorts.length + i + 1}
-                        q={q}
-                        showAnswer={false}
-                      />
-                    ))}
-                  </Section>
-                )}
-              </>
+              </div>
             )}
 
             <footer className="mt-8 border-t border-black/20 pt-3 text-center text-xs">
@@ -514,10 +571,48 @@ function EditField({ label, children }: { label: string; children: React.ReactNo
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="mt-6 break-inside-avoid">
-      <h2 className="text-base font-bold underline">{title}</h2>
-      <ol className="mt-3 space-y-3">{children}</ol>
+    <section className="paper-section">
+      <h2 className="paper-heading">{title}</h2>
+      <ol className="question-list">{children}</ol>
     </section>
+  );
+}
+
+/**
+ * Render a subject-banded paper: one headed block per band, in band order, with
+ * each question showing the global number it was generated as.
+ *
+ * The numbers come from the shared printed order rather than the band's own
+ * index, so a question's "Q41" on the sheet is the same Q41 the answer key and
+ * the OMR export resolve — the three can never drift apart.
+ */
+function BandedQuestionBody({
+  order,
+  sections,
+}: {
+  order: { question: GeneratedQuestion; number: number }[];
+  sections: SubjectSection[];
+}) {
+  return (
+    <>
+      {resolveSectionRanges(sections).map((band) => {
+        const inBand = order.filter(
+          ({ number }) => number >= band.firstQuestion && number <= band.lastQuestion,
+        );
+        return (
+          <section key={band.subject} className="paper-section">
+            <h2 className="paper-heading">
+              {band.subject} ({band.firstQuestion}–{band.lastQuestion})
+            </h2>
+            <ol className="question-list">
+              {inBand.map(({ question, number }) => (
+                <QuestionBlock key={number} num={number} q={question} showAnswer={false} />
+              ))}
+            </ol>
+          </section>
+        );
+      })}
+    </>
   );
 }
 
@@ -525,13 +620,35 @@ function answerLetter(question: GeneratedQuestion): string {
   return resolveAnswerLetter(question) || "—";
 }
 
-function AnswerKey({ questions }: { questions: GeneratedQuestion[] }) {
+/**
+ * The key fills straight down each column before starting the next one.
+ *
+ * An explicit `grid-template-rows` count plus `grid-flow-col` is what makes CSS
+ * fill column-major: entry 1, 2, 3 run down column one, and 41 starts at the top
+ * of column two. An ordinary `grid-cols-4` would run across instead (1 2 3 4 on
+ * the first row), which is the sideways reading order this key may not use, and
+ * the row count is derived from the entry count so the last column is never
+ * left with a stack of empty rows.
+ */
+function AnswerKey({
+  questions,
+  sections,
+}: {
+  questions: GeneratedQuestion[];
+  sections: SubjectSection[];
+}) {
+  const order = inPrintedOrder(questions, sections);
+  const columns = 4;
+  const rows = keyColumnRows(order.length, columns);
   return (
-    <section className="mt-6 break-inside-avoid">
+    <section className="mt-6">
       <h2 className="text-base font-bold underline">Answers</h2>
-      <ol className="mt-3 grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
-        {inPrintedOrder(questions).map(({ question, number }) => (
-          <li key={question.id}>
+      <ol
+        className="answer-key-grid grid grid-flow-col gap-x-8"
+        style={{ gridTemplateRows: `repeat(${rows}, auto)` }}
+      >
+        {order.map(({ question, number }) => (
+          <li key={number}>
             <b>Q{number}:</b>{" "}
             {question.type === "mcq" ? (
               answerLetter(question)
@@ -555,27 +672,25 @@ function QuestionBlock({
   showAnswer: boolean;
 }) {
   return (
-    <li className="break-inside-avoid rounded-xl border border-slate-200 bg-slate-50/70 p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-[16px] leading-8 tracking-[0.01em]">
+    <li className="question-block">
+      <div className="flex items-start justify-between gap-2">
+        <p className="question-stem">
           <b>Q{num}.</b>
           <span dangerouslySetInnerHTML={{ __html: formatExamText(q.question) }} />
         </p>
-        <span className="shrink-0 text-xs font-semibold tracking-wide text-slate-500">
-          [{q.marks}]
-        </span>
+        <span className="question-marks">[{q.marks}]</span>
       </div>
       {q.options && (
-        <ul className="ml-6 mt-2 space-y-1 text-[15px] leading-7 text-slate-800">
+        <ul className="question-options">
           {q.options.map((o, idx) => (
-            <li key={idx} className="list-[lower-alpha] pl-1">
+            <li key={idx}>
               <span dangerouslySetInnerHTML={{ __html: formatExamText(o) }} />
             </li>
           ))}
         </ul>
       )}
       {showAnswer && (
-        <p className="ml-6 mt-2 text-[15px] text-green-800">
+        <p className="question-answer">
           <b>Ans:</b>
           <span dangerouslySetInnerHTML={{ __html: formatExamText(q.answer) }} />
         </p>

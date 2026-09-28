@@ -180,3 +180,153 @@
     box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 25%, transparent);
   }
 }
+
+/*
+ * Printed question paper.
+ *
+ * A named page (not a bare `@page` rule) is used deliberately: the OMR sheet on
+ * this same route must keep printing portrait, so the landscape size is opted
+ * into by `.paper-sheet` only. A global `@page { size: A4 landscape }` would
+ * silently rotate every OMR sheet and every other printable page in the app.
+ */
+@page examlandscape {
+  size: A4 landscape;
+  margin: 8mm;
+}
+
+.paper-sheet {
+  page: examlandscape;
+}
+
+/*
+ * Sized to the landscape text block, so printing is not narrowed by the
+ * reading-width wrapper the other views use.
+ */
+.paper-wrap {
+  max-width: 68rem;
+}
+
+/*
+ * Two columns per page: questions fill down the left column, continue at the
+ * top of the right, then move to the next page. `column-fill: balance` only
+ * affects the final fragment, so a full page is always filled top-to-bottom in
+ * the left column first — the reading order a candidate expects.
+ *
+ * The columns are applied on screen as well as in print so the preview is the
+ * page that gets printed, rather than a taller single-column mock-up of it.
+ */
+.paper-columns {
+  column-count: 2;
+  column-gap: 8mm;
+  column-fill: balance;
+}
+
+/* A band or section heading, kept with the questions that follow it. */
+.paper-section {
+  margin-top: 0;
+  break-inside: auto;
+  break-after: avoid;
+}
+
+/* The next subject heading needs air above it once the previous band ends. */
+.paper-section + .paper-section {
+  margin-top: 0.7rem;
+}
+
+.paper-heading {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: underline;
+  margin: 0 0 0.35rem;
+}
+
+/* A question and its options are one unbreakable unit. */
+.question-list {
+  margin: 0;
+  padding-left: 1.4rem;
+}
+
+.question-list > li {
+  break-inside: avoid;
+  margin-top: 0.6rem;
+}
+
+.question-list > li:first-child {
+  margin-top: 0;
+}
+
+/*
+ * Questions print flat and tight: no card border, no background and no shadow,
+ * because a boxed question spends roughly a quarter of its height on padding
+ * and an A4 landscape column only holds six or seven of them. Dropping the box
+ * is what buys those questions per column.
+ */
+.question-block {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.question-stem {
+  font-size: 0.875rem;
+  line-height: 1.35;
+}
+
+.question-marks {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+/* Two options per row: four options then cost two lines, not four. */
+.question-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 0.6rem;
+  margin: 0.25rem 0 0 0.9rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8125rem;
+  line-height: 1.3;
+}
+
+.question-answer {
+  margin: 0.25rem 0 0 0.9rem;
+  font-size: 0.8125rem;
+  color: #14532d;
+}
+
+/*
+ * Answer key: an explicit row count plus `grid-flow-col` makes CSS fill
+ * column-major, so entries run 1, 2, 3 downwards before the next column starts.
+ */
+.answer-key-grid {
+  margin-top: 0.6rem;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  row-gap: 0.1rem;
+}
+
+@media print {
+  .paper-sheet {
+    /* The card padding is dead weight once the sheet is a real page. */
+    padding: 0;
+  }
+
+  .paper-sheet header {
+    padding-bottom: 0.35rem;
+  }
+
+  .paper-sheet h1 {
+    font-size: 1.1rem;
+  }
+
+  .paper-sheet footer {
+    margin-top: 0.5rem;
+  }
+}
+
+
