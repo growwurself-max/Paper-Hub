@@ -10,6 +10,10 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
+    "test": "node --env-file=.env --import tsx --test tests/*.test.ts",
+    "test:unit": "node --import tsx --test tests/omr-master-template.test.ts",
+    "test:e2e": "node --env-file=.env --import tsx --test tests/institute-journey.e2e.test.ts",
+    "typecheck": "tsc --noEmit",
     "seed:test-users": "npx tsx scripts/seed-test-users.ts"
   },
   "dependencies": {

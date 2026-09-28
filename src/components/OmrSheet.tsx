@@ -29,12 +29,12 @@ export function OmrSheet(props: OmrSheetProps) {
   }, [signature]);
 
   return (
-    <div className="overflow-x-auto bg-white p-3 text-black sm:p-6 print:overflow-visible print:p-0">
+    <div className="overflow-x-auto bg-white text-black print:overflow-visible">
       <canvas
         ref={canvasRef}
         role="img"
         aria-label={props.mode === "key" ? "Bubbled OMR answer key" : "OMR answer sheet"}
-        className="mx-auto block h-auto w-full print:h-auto print:w-[210mm]"
+        className="block h-auto w-full print:h-auto print:w-[210mm]"
       />
     </div>
   );

@@ -349,7 +349,7 @@ function PaperView() {
         ) : null}
 
         {view === "omr" ? (
-          <div className="overflow-hidden rounded-2xl bg-white shadow-lg print:rounded-none print:shadow-none">
+          <div className="w-full bg-white print:rounded-none print:shadow-none">
             <OmrSheet {...omrProps(omrPreview)} />
           </div>
         ) : (

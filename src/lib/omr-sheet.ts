@@ -143,6 +143,9 @@ const TAU = Math.PI * 2;
 /** 300dpi print scale, so a downloaded image is print-ready rather than screen-sized. */
 export const OMR_PRINT_SCALE = 300 / 96;
 
+/** Fixed maximum question count for master template layout - ensures invariant dimensions regardless of actual question count. */
+const MAX_STANDARD_QUESTIONS = 100;
+
 const INSTRUCTIONS: Record<OmrSheetMode, string[]> = {
   sheet: [
     "Use only a black or blue ball point pen. Darken the bubble completely in a single stroke.",
@@ -186,6 +189,8 @@ function detailsSegments(props: OmrSheetProps, count: number): string[] {
 export function buildOmrLayout(props: OmrSheetProps): OmrLayout {
   const mode: OmrSheetMode = props.mode === "key" ? "key" : "sheet";
   const count = Math.max(0, Math.floor(Number(props.questionCount) || 0));
+  // Use fixed maximum for layout calculations to ensure invariant master template dimensions
+  const layoutCount = Math.max(count, MAX_STANDARD_QUESTIONS);
   const letters = LETTERS.slice(
     0,
     clamp(Math.round(Number(props.optionCount) || 4), 2, LETTERS.length),
@@ -285,7 +290,7 @@ export function buildOmrLayout(props: OmrSheetProps): OmrLayout {
   const gridBottom = footerRuleY - 14;
   const gridHeight = Math.max(120, gridBottom - gridTop);
 
-  const numberWidth = Math.min(34, 18 + String(Math.max(count, 1)).length * 4.5);
+  const numberWidth = Math.min(34, 18 + String(Math.max(layoutCount, 1)).length * 4.5);
   const baseRowHeight = 27;
   /** Row height a well filled paper aims for, and the floor the fit test uses. */
   const minRowHeight = 16;
@@ -311,16 +316,18 @@ export function buildOmrLayout(props: OmrSheetProps): OmrLayout {
       1,
       Math.floor((CONTENT.width + COLUMN_GAP) / (minColumnWidth + COLUMN_GAP)),
     );
-    if (count <= maxColumns * rowsPerColumn) break;
+    if (layoutCount <= maxColumns * rowsPerColumn) break;
   }
 
-  let columnCount = count > 0 ? clamp(Math.ceil(count / maxRows), 1, maxColumns) : 1;
+  let columnCount = layoutCount > 0 ? clamp(Math.ceil(layoutCount / maxRows), 1, maxColumns) : 1;
   // A paper with no multiple choice questions still lays out one empty column:
   // a zero column grid would leave the option band unpainted, and any consumer
   // reading the first column would have nothing to read.
   let rows =
-    count > 0 ? Math.max(Math.ceil(count / columnCount), Math.ceil(count / maxColumns)) : 0;
-  columnCount = rows > 0 ? Math.ceil(count / rows) : 1;
+    layoutCount > 0
+      ? Math.max(Math.ceil(layoutCount / columnCount), Math.ceil(layoutCount / maxColumns))
+      : 0;
+  columnCount = rows > 0 ? Math.ceil(layoutCount / rows) : 1;
 
   let columnWidth = minColumnWidth;
   let slot = 18;
@@ -332,9 +339,9 @@ export function buildOmrLayout(props: OmrSheetProps): OmrLayout {
     // Spend leftover width on another column rather than a narrow block in the
     // middle of the page, but only once a block is genuinely taller than wide.
     const groupWidth = columnWidth * columnCount + COLUMN_GAP * (columnCount - 1);
-    if (groupWidth < CONTENT.width * 0.62 && columnCount < maxColumns && count > 25) {
+    if (groupWidth < CONTENT.width * 0.62 && columnCount < maxColumns && layoutCount > 25) {
       columnCount += 1;
-      rows = Math.max(1, Math.ceil(count / columnCount));
+      rows = Math.max(1, Math.ceil(layoutCount / columnCount));
       continue;
     }
     // Never let a clamped slot push the block past the printable width.
@@ -359,9 +366,8 @@ export function buildOmrLayout(props: OmrSheetProps): OmrLayout {
   const columns: OmrColumn[] = [];
   for (let index = 0; index < columnCount; index++) {
     const first = index * rows + 1;
-    // The one empty column of a zero question paper is kept so the option band
-    // is still painted; every later column has nothing left to place.
-    if (first > count && (rows > 0 || index > 0)) break;
+    // Only generate columns that will have actual questions
+    if (first > count) break;
     const last = Math.min(count, first + rows - 1);
     const x = originX + index * (columnWidth + COLUMN_GAP);
     const columnRows: OmrRow[] = [];
@@ -385,17 +391,20 @@ export function buildOmrLayout(props: OmrSheetProps): OmrLayout {
         });
       });
     }
-    columns.push({
-      x,
-      width: columnWidth,
-      firstNumber: first,
-      lastNumber: last,
-      labelY: blockTop + 10,
-      bandY: blockTop + 16,
-      bandHeight: 20,
-      rows: columnRows,
-      bubbles: columnBubbles,
-    });
+    // Only push column if it has actual questions
+    if (columnRows.length > 0) {
+      columns.push({
+        x,
+        width: columnWidth,
+        firstNumber: first,
+        lastNumber: last,
+        labelY: blockTop + 10,
+        bandY: blockTop + 16,
+        bandHeight: 20,
+        rows: columnRows,
+        bubbles: columnBubbles,
+      });
+    }
   }
 
   return {
