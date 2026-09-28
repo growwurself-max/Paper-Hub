@@ -2,6 +2,7 @@ import { createFileRoute, Link, Navigate, useNavigate } from "@tanstack/react-ro
 import { motion } from "framer-motion";
 import { useSession } from "@/lib/useSession";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { BrandLogo } from "@/components/BrandLogo";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -32,9 +33,10 @@ function OrgDashboard() {
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => templatesFn(), enabled });
   const quota = useQuery({ queryKey: ["quota"], queryFn: () => quotaFn(), enabled });
   const syllabi = useQuery({ queryKey: ["syllabi"], queryFn: () => syllabiFn(), enabled });
-  const quotaPct = quota.data && quota.data.quota > 0
-    ? Math.min(100, Math.round((quota.data.used / quota.data.quota) * 100))
-    : 0;
+  const quotaPct =
+    quota.data && quota.data.quota > 0
+      ? Math.min(100, Math.round((quota.data.used / quota.data.quota) * 100))
+      : 0;
 
   if (isLoading) return <DashboardSkeleton />;
   if (!session) return <Navigate to="/" />;
@@ -61,11 +63,12 @@ function OrgDashboard() {
   return (
     <div className="min-h-screen px-4 py-8 sm:px-8">
       <header className="mx-auto flex max-w-6xl items-center justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-3">
+          <BrandLogo height="md" />
+          <h1 className="sr-only">Paper Hub by Groww Tech</h1>
+          <span className="hidden truncate text-xs font-medium uppercase tracking-widest text-muted-foreground sm:inline">
             Institution workspace
-          </p>
-          <h1 className="text-2xl font-bold gradient-text">Question Paper Studio</h1>
+          </span>
         </div>
         <div className="flex items-center gap-3">
           <span className="hidden text-sm text-muted-foreground sm:inline">

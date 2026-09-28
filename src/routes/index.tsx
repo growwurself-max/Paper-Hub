@@ -3,6 +3,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { BrandLogo } from "@/components/BrandLogo";
 import { PasswordInput } from "@/components/PasswordInput";
 
 export const Route = createFileRoute("/")({
@@ -53,7 +54,8 @@ function OrgAdminLogin() {
         className="w-full max-w-md"
       >
         <GlassCard className="p-8">
-          <h1 className="text-3xl font-bold gradient-text">Question Paper Studio</h1>
+          <BrandLogo height="lg" />
+          <h1 className="sr-only">Paper Hub by Groww Tech</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Sign in with the credentials your administrator gave you.
           </p>
