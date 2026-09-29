@@ -11,8 +11,24 @@ export default defineConfig({
     tanstackStart(),
     react(),
     tailwindcss(),
-    nitro({ preset: "vercel" }),
+    nitro({
+      preset: "vercel",
+      renderer: {
+        handler:
+          "./node_modules/nitro/dist/runtime/internal/vite/ssr-renderer.mjs",
+      },
+    }),
   ],
+
+  environments: {
+    ssr: {
+      build: {
+        rollupOptions: {
+          input: "./src/server.ts",
+        },
+      },
+    },
+  },
 
   server: {
     port: 5174,
