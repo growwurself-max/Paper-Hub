@@ -1,17 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [
-    {
-      "source": "/_serverFn/(.*)",
-      "destination": "/_serverFn/:splat"
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/:splat"
-    },
-    {
-      "source": "/((?!api|_serverFn).*)$",
-      "destination": "/"
-    }
-  ]
+  "framework": "tanstack-start"
 }
