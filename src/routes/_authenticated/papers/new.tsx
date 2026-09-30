@@ -8,6 +8,9 @@ import { generatePaper, getTodayQuota } from "@/lib/paper.functions";
 import { EXAM_PRESETS, getPreset } from "@/lib/exam-presets";
 import { listSyllabi } from "@/lib/syllabus.functions";
 import { listTemplates, saveTemplate } from "@/lib/templates.functions";
+import { ExamUploadModeSelector, type UploadMode } from "@/components/ExamUploadModeSelector";
+import { SubjectConfigurator, type SubjectConfig } from "@/components/SubjectConfigurator";
+import { AllInOneUpload } from "@/components/AllInOneUpload";
 
 const searchSchema = z.object({
   preset: z.string().optional(),
@@ -71,6 +74,12 @@ function NewPaper() {
   const [error, setError] = useState<string | null>(null);
   const [templateName, setTemplateName] = useState("");
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  
+  // Dual-mode upload state
+  const [uploadMode, setUploadMode] = useState<UploadMode>("subject-wise");
+  const [subjectConfigs, setSubjectConfigs] = useState<SubjectConfig[]>([]);
+  const [allInOneFile, setAllInOneFile] = useState<File | null>(null);
+  const [allInOneText, setAllInOneText] = useState("");
 
   // Helper function to handle number input changes with proper decimal support
   const handleNumberChange = (
@@ -189,6 +198,7 @@ function NewPaper() {
     difficulty,
     chapters,
     instructions,
+    uploadMode: uploadMode === "subject-wise" || uploadMode === "all-in-one" ? uploadMode : "ai-generated",
     distribution: { 
       mcq: toNumber(mcq), 
       numeric: toNumber(numeric), 
@@ -240,9 +250,11 @@ function NewPaper() {
           </p>
         )}
 
-        <GlassCard className="mt-6">
+        <ExamUploadModeSelector mode={uploadMode} onModeChange={setUploadMode} />
+
+        <GlassCard className="mt-4">
           <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            1 · Choose an exam pattern
+            {uploadMode === "ai-generated" ? "1 · Choose an exam pattern" : "2 · Choose an exam pattern"}
           </h2>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             {EXAM_PRESETS.map((p) => (
@@ -263,17 +275,48 @@ function NewPaper() {
           </div>
         </GlassCard>
 
+        {uploadMode === "subject-wise" && (
+          <SubjectConfigurator
+            subjects={subjectConfigs}
+            onSubjectsChange={setSubjectConfigs}
+            totalQuestions={toNumber(mcq) + toNumber(numeric) + toNumber(short) + toNumber(long)}
+          />
+        )}
+
+        {uploadMode === "all-in-one" && (
+          <AllInOneUpload
+            file={allInOneFile}
+            onFileChange={setAllInOneFile}
+            onTextChange={setAllInOneText}
+          />
+        )}
+
         <form
           onSubmit={(e) => {
             e.preventDefault();
             setError(null);
+            
+            // Validate upload mode requirements
+            if (uploadMode === "subject-wise" && subjectConfigs.length === 0) {
+              setError("Please add at least one subject configuration.");
+              return;
+            }
+            if (uploadMode === "subject-wise" && subjectConfigs.some(s => !s.subject || !s.file && !s.manualText)) {
+              setError("Please complete all subject configurations with either a file or manual text.");
+              return;
+            }
+            if (uploadMode === "all-in-one" && !allInOneFile && !allInOneText) {
+              setError("Please upload a file or paste questions for all-in-one mode.");
+              return;
+            }
+            
             gen.mutate();
           }}
           className="mt-4 space-y-4"
         >
           <GlassCard>
             <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-              2 · Paper details
+              {uploadMode === "ai-generated" ? "2 · Paper details" : "3 · Paper details"}
             </h2>
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
               <Field label="Paper title *">
@@ -428,7 +471,7 @@ function NewPaper() {
 
           <GlassCard>
             <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-              3 · Source content
+              {uploadMode === "ai-generated" ? "3 · Source content" : "4 · Source content"}
             </h2>
             <div className="mt-3 grid gap-4">
               <Field label="Syllabus / concept PDF (optional)">
@@ -476,7 +519,7 @@ function NewPaper() {
           {isStrictPreset && (
             <GlassCard>
               <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-                4 · Strict MCQ blueprint
+                {uploadMode === "ai-generated" ? "4 · Strict MCQ blueprint" : "5 · Strict MCQ blueprint"}
               </h2>
               <p className="mt-3 text-sm text-muted-foreground">
                 {toNumber(mcq)} MCQs and {toNumber(numeric)} numerical value questions · {toNumber(mcq) + toNumber(numeric)} total questions
@@ -486,7 +529,7 @@ function NewPaper() {
 
           {!isStrictPreset && <GlassCard>
             <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-              4 · Question mix
+              {uploadMode === "ai-generated" ? "4 · Question mix" : "5 · Question mix"}
             </h2>
             <div className="mt-3 grid gap-4 sm:grid-cols-4">
               <Field label="MCQ (1 mark)">
