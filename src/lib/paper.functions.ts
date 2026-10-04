@@ -2,6 +2,14 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getPreset } from "@/lib/exam-presets";
+import {
+  GeminiRequestError,
+  MAX_GEMINI_ATTEMPTS,
+  geminiModels,
+  geminiRetryDelay,
+  isRetryableGeminiStatus,
+  requestGeminiText,
+} from "@/lib/gemini";
 import { readPlatformLimits } from "@/lib/platform-limits";
 import {
   allocateSectionDistributions,
@@ -13,8 +21,26 @@ import {
   type ResolvedSection,
 } from "@/lib/paper-sections";
 import { parseCombinedDocument, parseSubjectWiseUploads, type ParsedSubjectSection } from "@/lib/upload-parser";
+import { selectTextbookBandSubject, textbookSourcePrompt } from "@/lib/textbook-images";
 
 const STRICT_PRESET_IDS = new Set(["eamcet", "neet", "jee-main", "jee-advanced"]);
+
+/**
+ * The educational content a teacher read off photographed textbook pages.
+ *
+ * Only the digest travels: the photographs themselves are analysed in a
+ * separate call and discarded, and this text is what every generation batch
+ * for the paper is grounded in. Kept optional on purpose — a paper generated
+ * without photographed pages carries no such block and must keep working.
+ */
+const textbookSourceSchema = z.object({
+  chapter: z.string().max(300).default(""),
+  subject: z.string().max(100).default(""),
+  topics: z.array(z.string().max(200)).max(40).default([]),
+  keyPoints: z.array(z.string().max(400)).max(60).default([]),
+  contentDigest: z.string().max(8000).default(""),
+  pageCount: z.number().int().min(1).max(10),
+});
 
 const generateInput = z.object({
   title: z.string().min(1).max(200),
@@ -53,6 +79,12 @@ const generateInput = z.object({
   difficulty: z.enum(["easy", "medium", "hard", "mixed"]).default("mixed"),
   chapters: z.string().max(2000).default(""),
   instructions: z.string().max(1000).default(""),
+  /**
+   * Present only when the teacher supplied textbook page photos. null (the
+   * default) means questions come from the typed topic and the syllabus exactly
+   * as before.
+   */
+  textbookSource: textbookSourceSchema.nullable().optional().default(null),
   distribution: z
     .object({
       mcq: z.number().int().min(0).max(300).default(10),
@@ -527,7 +559,7 @@ export const generatePaper = createServerFn({ method: "POST" })
 
     const geminiKey = process.env.GEMINI_API_KEY;
     console.info(
-      `[AI] init · gemini_key=${geminiKey ? "loaded" : "missing"} preset=${data.examPreset} sections=${resolvedSections.length} syllabus_chars=${syllabusChars}`,
+      `[AI] init · gemini_key=${geminiKey ? "loaded" : "missing"} preset=${data.examPreset} sections=${resolvedSections.length} syllabus_chars=${syllabusChars} textbook_pages=${generationData.textbookSource?.pageCount ?? 0}`,
     );
 
     if (!geminiKey) {
@@ -646,6 +678,7 @@ ${scope ? `${scope}\n` : ""}${examStandard}
 ${cfg.instructions ? `- Extra instructions: ${cfg.instructions}` : ""}
 ${cfg.examPreset && cfg.examPreset !== "custom" ? `- Exam pattern: ${cfg.examPreset.toUpperCase()} — match its official style, depth, phrasing and time pressure.` : ""}
 ${cfg.negativeMarking ? `- Negative marking: ${cfg.negativeMarking} mark(s) per wrong answer, so each MCQ must have exactly one unambiguous correct option.` : ""}
+${textbookSourcePrompt(cfg.textbookSource)}
 ${
   syllabusText
     ? `\nFirst analyse the syllabus below, list its major topics mentally, then generate questions distributed PROPORTIONALLY across those topics. Use ONLY this content as the source of topics:\n"""\n${syllabusText}\n"""\n`
@@ -682,19 +715,6 @@ Rules:
 }
 
 /** Direct Google Gemini API (GEMINI_API_KEY from the environment). */
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const FALLBACK_GEMINI_MODEL = "gemini-3.5-flash-lite";
-const MAX_GEMINI_ATTEMPTS = 3;
-const RETRYABLE_GEMINI_STATUSES = new Set([429, 500, 502, 503, 504]);
-
-function isRetryableGeminiStatus(status: number): boolean {
-  return RETRYABLE_GEMINI_STATUSES.has(status);
-}
-
-function geminiRetryDelay(attempt: number): number {
-  return 500 * 2 ** attempt + Math.floor(Math.random() * 250);
-}
-
 async function generateWithGemini(
   apiKey: string,
   cfg: PaperInput,
@@ -703,73 +723,43 @@ async function generateWithGemini(
 ): Promise<GeneratedQuestion[]> {
   const { system, user } = buildPrompts(cfg, syllabusText, scope);
   // The key is never inspected or format-checked; only Google's own response decides validity.
-  const configured = process.env.GEMINI_MODEL?.trim();
-  const primaryModel =
-    configured && configured !== "gemini-flash-latest" ? configured : DEFAULT_GEMINI_MODEL;
-  const models = [...new Set([primaryModel, FALLBACK_GEMINI_MODEL])];
+  const models = geminiModels();
 
   let lastError = "";
   for (const model of models) {
     for (let attempt = 0; attempt < MAX_GEMINI_ATTEMPTS; attempt++) {
       const started = Date.now();
       console.info(`[AI] Gemini request → model=${model} attempt=${attempt + 1}`);
-      let res: Response;
+      let content: string;
       try {
-        res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-            body: JSON.stringify({
-              systemInstruction: { parts: [{ text: system }] },
-              contents: [{ role: "user", parts: [{ text: user }] }],
-              generationConfig: {
-                temperature: 0.65,
-                topP: 0.85,
-                topK: 40,
-                responseMimeType: "application/json",
-              },
-            }),
-          },
-        );
+        content = await requestGeminiText({
+          apiKey,
+          model,
+          systemInstruction: system,
+          parts: [{ text: user }],
+          temperature: 0.65,
+        });
       } catch (error) {
-        lastError = `Gemini network request failed for model "${model}": ${error instanceof Error ? error.message : String(error)}`;
+        lastError = error instanceof Error ? error.message : String(error);
         console.error(`[AI] ${lastError}`);
-        if (attempt + 1 < MAX_GEMINI_ATTEMPTS) {
-          await new Promise((resolve) => setTimeout(resolve, geminiRetryDelay(attempt)));
-          continue;
-        }
-        break;
-      }
-
-      if (!res.ok) {
-        const body = await res.text();
-        let apiMessage = body.slice(0, 400);
-        try {
-          const parsed = JSON.parse(body) as { error?: { message?: string; status?: string } };
-          if (parsed.error?.message) {
-            apiMessage = `${parsed.error.status ?? res.status}: ${parsed.error.message}`;
-          }
-        } catch {
-          /* keep the raw body */
-        }
-        lastError = `Google Gemini API error (HTTP ${res.status}) for model "${model}" — ${apiMessage}`;
-        console.error(`[AI] ${lastError}`);
-        if (isRetryableGeminiStatus(res.status) && attempt + 1 < MAX_GEMINI_ATTEMPTS) {
+        const status = error instanceof GeminiRequestError ? error.status : null;
+        const canRetry = attempt + 1 < MAX_GEMINI_ATTEMPTS;
+        if (status !== null && isRetryableGeminiStatus(status) && canRetry) {
           const delay = geminiRetryDelay(attempt);
           console.warn(`[AI] transient Gemini failure; retrying in ${delay}ms`);
           await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }
+        if (status === null && canRetry) {
+          await new Promise((resolve) => setTimeout(resolve, geminiRetryDelay(attempt)));
+          continue;
+        }
         // A model that is unavailable for this key, or a transient failure after retries: try the next model.
-        if (res.status === 404 || res.status === 400 || isRetryableGeminiStatus(res.status)) break;
+        if (status === null || status === 404 || status === 400 || isRetryableGeminiStatus(status))
+          break;
         throw new Error(lastError);
       }
 
-      const json = (await res.json()) as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-      };
-      const content = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
       console.info(
         `[AI] Gemini response ← model=${model} ${content.length} chars in ${Date.now() - started}ms`,
       );
@@ -829,6 +819,23 @@ async function generateBandedQuestions(
     sections.map((section) => section.questionCount),
   );
 
+  /**
+   * Photographed textbook pages are a single-subject source, so on a banded
+   * paper they can only ground one band — the band they are actually about.
+   * Every other band generates from its own syllabus exactly as before, which
+   * is what keeps an EAMCET page-range blueprint intact.
+   */
+  const textbookBand = selectTextbookBandSubject(cfg.textbookSource ?? null, sections, cfg.subject);
+  if (cfg.textbookSource && !textbookBand) {
+    console.warn(
+      `[AI] textbook source "${cfg.textbookSource.subject || "subject unstated"}" matches no band (${sections
+        .map((section) => section.subject)
+        .join(", ")}); generating from the syllabus only`,
+    );
+  } else if (textbookBand) {
+    console.info(`[AI] textbook source grounds the ${textbookBand} band`);
+  }
+
   const merged: GeneratedQuestion[] = [];
   for (const [index, section] of sections.entries()) {
     const batchSizes = chunkQuestionCounts(section.questionCount, MAX_QUESTIONS_PER_CALL);
@@ -839,6 +846,7 @@ async function generateBandedQuestions(
       const distribution = batchDistributions[batch]!;
       const batchCfg: PaperInput = {
         ...cfg,
+        textbookSource: section.subject === textbookBand ? cfg.textbookSource : null,
         subject: section.subject,
         distribution,
         totalMarks: distributionMarks(distribution, cfg.marks),

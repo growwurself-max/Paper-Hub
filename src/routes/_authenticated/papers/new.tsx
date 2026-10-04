@@ -1,16 +1,26 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
+import { BookOpen, Camera, FileText, PencilLine } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { generatePaper, getTodayQuota } from "@/lib/paper.functions";
+import { analyzeTextbookImages } from "@/lib/textbook.functions";
+import {
+  MAX_TEXTBOOK_IMAGES,
+  dataUrlToBase64,
+  type TextbookPage,
+  type TextbookSource,
+} from "@/lib/textbook-images";
 import { EXAM_PRESETS, getPreset } from "@/lib/exam-presets";
 import { listSyllabi } from "@/lib/syllabus.functions";
 import { listTemplates, saveTemplate } from "@/lib/templates.functions";
 import { ExamUploadModeSelector, type UploadMode } from "@/components/ExamUploadModeSelector";
 import { SubjectConfigurator, type SubjectConfig } from "@/components/SubjectConfigurator";
 import { AllInOneUpload } from "@/components/AllInOneUpload";
+import { TextbookImageUpload } from "@/components/TextbookImageUpload";
+import { TextbookSourceSummary } from "@/components/TextbookSourceSummary";
 
 const searchSchema = z.object({
   preset: z.string().optional(),
@@ -19,6 +29,27 @@ const searchSchema = z.object({
 });
 
 const STRICT_PRESET_IDS = new Set(["eamcet", "neet", "jee-main", "jee-advanced"]);
+
+/**
+ * Where the teaching content comes from.
+ *
+ * `topic` is the default and leaves the paper form exactly as it was, so a
+ * teacher who never touches this control generates the paper they generated
+ * before. `textbook` adds photographed pages as a source alongside the typed
+ * topic; `pdf` is the existing uploaded-syllabus document.
+ */
+type QuestionSource = "topic" | "textbook" | "pdf";
+
+const QUESTION_SOURCES: Array<{
+  id: QuestionSource;
+  label: string;
+  hint: string;
+  icon: typeof PencilLine;
+}> = [
+  { id: "topic", label: "Type topic", hint: "Chapters you type in", icon: PencilLine },
+  { id: "textbook", label: "Textbook image", hint: "Photo pages with your phone", icon: Camera },
+  { id: "pdf", label: "Upload PDF", hint: "An uploaded syllabus document", icon: FileText },
+];
 
 export const Route = createFileRoute("/_authenticated/papers/new")({
   validateSearch: (s: Record<string, unknown>) => searchSchema.parse(s),
@@ -39,6 +70,7 @@ function NewPaper() {
   const navigate = useNavigate();
   const search = Route.useSearch();
   const generateFn = useServerFn(generatePaper);
+  const analyzeFn = useServerFn(analyzeTextbookImages);
   const quotaFn = useServerFn(getTodayQuota);
   const syllabiFn = useServerFn(listSyllabi);
   const templatesFn = useServerFn(listTemplates);
@@ -80,6 +112,15 @@ function NewPaper() {
   const [subjectConfigs, setSubjectConfigs] = useState<SubjectConfig[]>([]);
   const [allInOneFile, setAllInOneFile] = useState<File | null>(null);
   const [allInOneText, setAllInOneText] = useState("");
+
+  // Textbook page photos. `pages` is the compressed payload held in memory and
+  // `textbookSource` is what one AI read of it produced; neither is persisted.
+  const [questionSource, setQuestionSource] = useState<QuestionSource>("topic");
+  const [pages, setPages] = useState<TextbookPage[]>([]);
+  const [textbookSource, setTextbookSource] = useState<TextbookSource | null>(null);
+  const [pagesConfirmed, setPagesConfirmed] = useState(false);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+  const topicFieldRef = useRef<HTMLTextAreaElement>(null);
 
   // Helper function to handle number input changes with proper decimal support
   const handleNumberChange = (
@@ -198,6 +239,9 @@ function NewPaper() {
     difficulty,
     chapters,
     instructions,
+    // Only a confirmed read of the photographed pages grounds the paper; every
+    // other choice sends null and the paper generates exactly as before.
+    textbookSource: questionSource === "textbook" ? textbookSource : null,
     uploadMode: uploadMode === "subject-wise" || uploadMode === "all-in-one" ? uploadMode : "ai-generated",
     distribution: { 
       mcq: toNumber(mcq), 
@@ -214,6 +258,44 @@ function NewPaper() {
           long: toNumber(longMarks) 
         },
   });
+
+  const analyze = useMutation({
+    mutationFn: async () =>
+      analyzeFn({
+        data: {
+          pages: pages.map((page) => ({
+            mimeType: page.mimeType,
+            data: dataUrlToBase64(page.dataUrl),
+          })),
+          // A typed topic narrows the emphasis; it never overrides the pages.
+          focusTopic: chapters,
+          subject,
+        },
+      }),
+    onSuccess: (res) => {
+      setTextbookSource(res);
+      setPagesConfirmed(false);
+      setSourceError(null);
+    },
+    onError: (e: Error) => {
+      setTextbookSource(null);
+      setPagesConfirmed(false);
+      setSourceError(e.message);
+    },
+  });
+
+  /** Changing the pages invalidates whatever the model read about them. */
+  function changePages(next: TextbookPage[]) {
+    setPages(next);
+    setTextbookSource(null);
+    setPagesConfirmed(false);
+    setSourceError(null);
+  }
+
+  /** "Edit topic" puts the cursor in the typed-topic box, which is always there. */
+  function focusTopicField() {
+    topicFieldRef.current?.focus();
+  }
 
   const gen = useMutation({
     mutationFn: async () => generateFn({ data: payload() }),
@@ -234,7 +316,12 @@ function NewPaper() {
 
   const isStrictPreset = STRICT_PRESET_IDS.has(presetId);
   const totalQuestions = toNumber(mcq) + toNumber(numeric) + toNumber(short) + toNumber(long);
-  const canSubmit = Boolean(title && subject && className && totalQuestions > 0) && !gen.isPending;
+  // A textbook-sourced paper cannot start until the pages have been read and the
+  // teacher has seen what was found; every other source is unaffected.
+  const textbookReady =
+    questionSource !== "textbook" || (textbookSource !== null && pagesConfirmed);
+  const canSubmit =
+    Boolean(title && subject && className && totalQuestions > 0) && !gen.isPending && textbookReady;
   const quotaFull = quota.data ? quota.data.used >= quota.data.quota : false;
 
   return (
@@ -307,6 +394,23 @@ function NewPaper() {
             }
             if (uploadMode === "all-in-one" && !allInOneFile && !allInOneText) {
               setError("Please upload a file or paste questions for all-in-one mode.");
+              return;
+            }
+
+            // Never generate from textbook pages that were never read: an
+            // unread read would silently produce an off-textbook paper.
+            if (questionSource === "textbook" && pages.length === 0) {
+              setError(
+                "Add at least one textbook page photo, or switch the question source back to a topic.",
+              );
+              return;
+            }
+            if (questionSource === "textbook" && !textbookReady) {
+              setError(
+                analyze.isPending
+                  ? "Still reading the textbook pages…"
+                  : "Read the textbook pages and confirm what was found before generating.",
+              );
               return;
             }
             
@@ -474,6 +578,132 @@ function NewPaper() {
               {uploadMode === "ai-generated" ? "3 · Source content" : "4 · Source content"}
             </h2>
             <div className="mt-3 grid gap-4">
+              <Field label="Question source">
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {QUESTION_SOURCES.map((option) => {
+                    const Icon = option.icon;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        aria-pressed={questionSource === option.id}
+                        onClick={() => setQuestionSource(option.id)}
+                        className={`rounded-xl border p-3 text-left transition ${
+                          questionSource === option.id
+                            ? "border-primary bg-primary/10"
+                            : "border-border hover:bg-card/60"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5 text-sm font-medium">
+                          <Icon className="h-4 w-4 text-primary" />
+                          {option.label}
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                          {option.hint}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Have the textbook page with you? Take a photo and let Paper Hub create questions
+                  from it. Up to {MAX_TEXTBOOK_IMAGES} pages, and they are discarded once the paper
+                  is generated.
+                </p>
+              </Field>
+
+              {questionSource === "textbook" &&
+                (pagesConfirmed && textbookSource ? (
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-primary/40 bg-primary/5 px-4 py-3">
+                    <BookOpen className="h-4 w-4 text-primary" />
+                    <span className="text-sm">
+                      {textbookSource.pageCount} textbook page
+                      {textbookSource.pageCount === 1 ? "" : "s"}
+                      {textbookSource.chapter ? ` · ${textbookSource.chapter}` : ""}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPagesConfirmed(false);
+                        focusTopicField();
+                      }}
+                      className="text-xs underline hover:text-foreground"
+                    >
+                      Edit topic
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPagesConfirmed(false);
+                        setTextbookSource(null);
+                        setSourceError(null);
+                      }}
+                      className="text-xs underline hover:text-foreground"
+                    >
+                      Change pages
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <TextbookImageUpload
+                      pages={pages}
+                      onPagesChange={changePages}
+                      busy={analyze.isPending || gen.isPending}
+                    />
+
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSourceError(null);
+                          setError(null);
+                          analyze.mutate();
+                        }}
+                        disabled={
+                          pages.length === 0 || analyze.isPending || gen.isPending || quotaFull
+                        }
+                        className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                      >
+                        {analyze.isPending ? "Reading the pages…" : "Read textbook pages"}
+                      </button>
+                      <span className="text-xs text-muted-foreground">
+                        Reading the pages is one small AI call. Generating the paper then costs the
+                        same as any other paper.
+                      </span>
+                    </div>
+
+                    {sourceError && (
+                      <div className="mt-3 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                        <p>{sourceError}</p>
+                        <p className="mt-1 text-xs">
+                          Your pages are still here — retake the unclear one or try again. You can
+                          also switch the question source back to a typed topic at any time.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => analyze.mutate()}
+                          disabled={analyze.isPending || pages.length === 0}
+                          className="mt-2 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                        >
+                          Try again
+                        </button>
+                      </div>
+                    )}
+
+                    {textbookSource && (
+                      <TextbookSourceSummary
+                        source={textbookSource}
+                        busy={gen.isPending}
+                        onEdit={focusTopicField}
+                        onContinue={() => {
+                          setPagesConfirmed(true);
+                          setSourceError(null);
+                        }}
+                      />
+                    )}
+                  </div>
+                ))}
+
               <Field label="Syllabus / concept PDF (optional)">
                 <select
                   value={syllabusId}
@@ -496,14 +726,27 @@ function NewPaper() {
                   to generate questions strictly from your own material.
                 </p>
               </Field>
-              <Field label="Chapters / topics (comma separated)">
+              <Field
+                label={
+                  questionSource === "textbook"
+                    ? "Chapters / topics (optional focus for the pages above)"
+                    : "Chapters / topics (comma separated)"
+                }
+              >
                 <textarea
                   rows={3}
+                  ref={topicFieldRef}
                   value={chapters}
                   onChange={(e) => setChapters(e.target.value)}
                   placeholder="Laws of Motion, Work Energy Power, Thermodynamics"
                   className="input"
                 />
+                {questionSource === "textbook" && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Optional. Add a topic to tell Paper Hub which part of the photographed pages you
+                    want; the pages stay the actual source.
+                  </p>
+                )}
               </Field>
               <Field label="Extra instructions printed on the paper">
                 <textarea
