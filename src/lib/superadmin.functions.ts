@@ -213,7 +213,7 @@ export const listOrganizations = createServerFn({ method: "GET" })
     const { data: orgs, error } = await supabaseAdmin
       .from("organizations")
       .select(
-        "id, name, plan, status, expiry_date, ai_daily_quota, paper_credit_balance, paper_daily_limit, created_at",
+        "id, name, address, plan, status, expiry_date, ai_daily_quota, paper_credit_balance, paper_daily_limit, created_at",
       )
       .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
@@ -234,6 +234,10 @@ export const listOrganizations = createServerFn({ method: "GET" })
 
 const UpdateOrgInput = z.object({
   organizationId: z.string().uuid(),
+  name: z.string().min(1).max(200).optional(),
+  address: z.string().max(500).optional(),
+  adminName: z.string().min(1).max(120).optional(),
+  adminEmail: z.string().email().optional(),
   status: z.enum(["active", "inactive", "suspended"]).optional(),
   plan: z.enum(["free", "basic", "pro"]).optional(),
   expiryDate: z.string().nullable().optional(),
@@ -255,6 +259,8 @@ export const updateOrganization = createServerFn({ method: "POST" })
     }
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const patch: {
+      name?: string;
+      address?: string;
       status?: "active" | "inactive" | "suspended";
       plan?: "free" | "basic" | "pro";
       expiry_date?: string | null;
@@ -262,25 +268,116 @@ export const updateOrganization = createServerFn({ method: "POST" })
       paper_credit_balance?: number | null;
       paper_daily_limit?: number;
     } = {};
+    if (data.name !== undefined) patch.name = data.name;
+    if (data.address !== undefined) patch.address = data.address;
     if (data.status !== undefined) patch.status = data.status;
     if (data.plan !== undefined) patch.plan = data.plan;
     if (data.expiryDate !== undefined) patch.expiry_date = data.expiryDate;
     if (data.aiDailyQuota !== undefined) patch.ai_daily_quota = data.aiDailyQuota;
     if (data.paperCreditBalance !== undefined) patch.paper_credit_balance = data.paperCreditBalance;
     if (data.paperDailyLimit !== undefined) patch.paper_daily_limit = data.paperDailyLimit;
+
     const { error } = await supabaseAdmin
       .from("organizations")
       .update(patch)
       .eq("id", data.organizationId);
     if (error) throw new Error(error.message);
+
+    const profilePatch: { email?: string; full_name?: string } = {};
+    if (data.adminEmail !== undefined) profilePatch.email = data.adminEmail;
+    if (data.adminName !== undefined) profilePatch.full_name = data.adminName;
+
+    if (Object.keys(profilePatch).length > 0) {
+      const { data: profile, error: profileError } = await supabaseAdmin
+        .from("profiles")
+        .select("id, email, full_name")
+        .eq("organization_id", data.organizationId)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (profileError) throw new Error(profileError.message);
+      if (!profile) throw new Error("No admin account found for this organization");
+
+      if (data.adminEmail !== undefined && data.adminEmail !== profile.email) {
+        const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(profile.id, {
+          email: data.adminEmail,
+          email_confirm: true,
+        });
+        if (authError) throw new Error(authError.message);
+      }
+
+      const { error: updateProfileError } = await supabaseAdmin
+        .from("profiles")
+        .update(profilePatch)
+        .eq("id", profile.id);
+      if (updateProfileError) throw new Error(updateProfileError.message);
+    }
+
     await supabaseAdmin.from("audit_logs").insert({
       actor_user_id: context.userId,
       organization_id: data.organizationId,
       action: "organization.update",
       target_type: "organization",
       target_id: data.organizationId,
-      metadata: patch as Record<string, string | number | null>,
+      metadata: {
+        ...patch,
+        ...(data.adminEmail !== undefined ? { adminEmail: data.adminEmail } : {}),
+        ...(data.adminName !== undefined ? { adminName: data.adminName } : {}),
+      } as Record<string, string | number | null>,
     });
+    return { ok: true };
+  });
+
+const DeleteOrgInput = z.object({ organizationId: z.string().uuid() });
+
+export const deleteOrganization = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((raw: unknown) => DeleteOrgInput.parse(raw))
+  .handler(async ({ data, context }) => {
+    const { data: roles } = await context.supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", context.userId);
+    if (!roles?.some((r) => r.role === "super_admin")) {
+      throw new Response("Forbidden", { status: 403 });
+    }
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const { data: org, error: orgError } = await supabaseAdmin
+      .from("organizations")
+      .select("id, name")
+      .eq("id", data.organizationId)
+      .maybeSingle();
+    if (orgError) throw new Error(orgError.message);
+    if (!org) throw new Error("Organization not found");
+
+    const { data: admins, error: adminsError } = await supabaseAdmin
+      .from("profiles")
+      .select("id")
+      .eq("organization_id", data.organizationId);
+    if (adminsError) throw new Error(adminsError.message);
+
+    await supabaseAdmin.from("audit_logs").insert({
+      actor_user_id: context.userId,
+      organization_id: data.organizationId,
+      action: "organization.delete",
+      target_type: "organization",
+      target_id: data.organizationId,
+      metadata: { name: org.name, deletedAdminIds: (admins ?? []).map((a) => a.id) },
+    });
+
+    const { data: deleted, error: deleteError } = await supabaseAdmin
+      .from("organizations")
+      .delete()
+      .eq("id", data.organizationId)
+      .select("id");
+    if (deleteError) throw new Error(deleteError.message);
+    if (!deleted?.length) throw new Error("Organization not found");
+
+    // Organization-scoped rows cascade via FKs; also remove the orphaned auth
+    // accounts for this organization's admins.
+    await Promise.all((admins ?? []).map((admin) => supabaseAdmin.auth.admin.deleteUser(admin.id)));
+
     return { ok: true };
   });
 

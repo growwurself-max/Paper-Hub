@@ -3,12 +3,14 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { useSession } from "@/lib/useSession";
 import {
   listOrganizations,
   createOrganization,
   updateOrganization,
+  deleteOrganization,
   resetOrgAdminPassword,
 } from "@/lib/superadmin.functions";
 import { PasswordInput } from "@/components/PasswordInput";
@@ -20,28 +22,67 @@ export const Route = createFileRoute("/_authenticated/super-admin/organizations"
   component: OrgsPage,
 });
 
+type OrgPlan = "free" | "basic" | "pro";
+type OrgStatus = "active" | "inactive" | "suspended";
+
+type OrgRow = {
+  id: string;
+  name: string;
+  address: string | null;
+  plan: OrgPlan;
+  status: OrgStatus;
+  expiry_date: string | null;
+  ai_daily_quota: number;
+  paper_credit_balance: number | null;
+  paper_daily_limit: number;
+  created_at: string;
+  adminEmail: string | null;
+  adminName: string | null;
+};
+
 type CreateInput = {
   orgName: string;
   adminName: string;
   adminEmail: string;
   tempPassword: string;
-  plan: "free" | "basic" | "pro";
+  plan: OrgPlan;
   expiryDate: string | null;
-  status: "active" | "inactive" | "suspended";
+  status: OrgStatus;
   address: string;
   aiDailyQuota: number;
   paperCreditBalance: number | null;
   paperDailyLimit: number;
 };
 
+type UpdateInput = {
+  organizationId: string;
+  name?: string;
+  address?: string;
+  adminName?: string;
+  adminEmail?: string;
+  status?: OrgStatus;
+  plan?: OrgPlan;
+  expiryDate?: string | null;
+  aiDailyQuota?: number;
+  paperCreditBalance?: number | null;
+  paperDailyLimit?: number;
+};
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Something went wrong";
+}
+
 function OrgsPage() {
   const { data: session, isLoading: sLoading } = useSession();
   const listFn = useServerFn(listOrganizations);
   const createFn = useServerFn(createOrganization);
   const updateFn = useServerFn(updateOrganization);
+  const deleteFn = useServerFn(deleteOrganization);
   const resetFn = useServerFn(resetOrgAdminPassword);
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<OrgRow | null>(null);
+  const [deleting, setDeleting] = useState<OrgRow | null>(null);
   const [resetting, setResetting] = useState<string | null>(null);
 
   const { data: orgs, isLoading } = useQuery({
@@ -50,26 +91,45 @@ function OrgsPage() {
     enabled: session?.role === "super_admin",
   });
 
+  function refreshOrgs() {
+    qc.invalidateQueries({ queryKey: ["super-admin-orgs"] });
+    qc.invalidateQueries({ queryKey: ["super-admin-stats"] });
+  }
+
   const createMut = useMutation({
     mutationFn: (input: CreateInput) => createFn({ data: input }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["super-admin-orgs"] });
-      qc.invalidateQueries({ queryKey: ["super-admin-stats"] });
+      refreshOrgs();
       setShowCreate(false);
+      toast.success("Organization created");
     },
+    onError: (error) => toast.error(errorMessage(error)),
   });
 
   const updateMut = useMutation({
-    mutationFn: (input: {
-      organizationId: string;
-      status?: "active" | "inactive" | "suspended";
-      plan?: "free" | "basic" | "pro";
-      expiryDate?: string | null;
-      aiDailyQuota?: number;
-      paperCreditBalance?: number | null;
-      paperDailyLimit?: number;
-    }) => updateFn({ data: input }),
+    mutationFn: (input: UpdateInput) => updateFn({ data: input }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["super-admin-orgs"] }),
+    onError: (error) => toast.error(errorMessage(error)),
+  });
+
+  const editMut = useMutation({
+    mutationFn: (input: UpdateInput) => updateFn({ data: input }),
+    onSuccess: () => {
+      refreshOrgs();
+      setEditing(null);
+      toast.success("Organization updated");
+    },
+    onError: (error) => toast.error(errorMessage(error)),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (organizationId: string) => deleteFn({ data: { organizationId } }),
+    onSuccess: () => {
+      refreshOrgs();
+      setDeleting(null);
+      toast.success("Organization deleted");
+    },
+    onError: (error) => toast.error(errorMessage(error)),
   });
 
   if (sLoading) return null;
@@ -200,12 +260,32 @@ function OrgsPage() {
                       />
                     </td>
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => setResetting(o.id)}
-                        className="text-xs text-accent underline"
-                      >
-                        Reset password
-                      </button>
+                      <div className="flex items-center gap-3 text-xs">
+                        <button
+                          onClick={() => {
+                            editMut.reset();
+                            setEditing(o);
+                          }}
+                          className="text-accent underline"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => setResetting(o.id)}
+                          className="text-accent underline"
+                        >
+                          Reset password
+                        </button>
+                        <button
+                          onClick={() => {
+                            deleteMut.reset();
+                            setDeleting(o);
+                          }}
+                          className="text-destructive underline"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -222,6 +302,24 @@ function OrgsPage() {
             onSubmit={(input) => createMut.mutateAsync(input)}
             error={createMut.error instanceof Error ? createMut.error.message : null}
             loading={createMut.isPending}
+          />
+        )}
+        {editing && (
+          <EditOrgModal
+            org={editing}
+            onClose={() => setEditing(null)}
+            onSubmit={(input) => editMut.mutateAsync(input)}
+            error={editMut.error ? errorMessage(editMut.error) : null}
+            loading={editMut.isPending}
+          />
+        )}
+        {deleting && (
+          <DeleteOrgModal
+            org={deleting}
+            onClose={() => setDeleting(null)}
+            onConfirm={() => deleteMut.mutateAsync(deleting.id)}
+            error={deleteMut.error ? errorMessage(deleteMut.error) : null}
+            loading={deleteMut.isPending}
           />
         )}
         {resetting && (
@@ -417,6 +515,261 @@ function CreateOrgModal({
               </button>
             </div>
           </form>
+        </GlassCard>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function EditOrgModal({
+  org,
+  onClose,
+  onSubmit,
+  error,
+  loading,
+}: {
+  org: OrgRow;
+  onClose: () => void;
+  onSubmit: (input: UpdateInput) => Promise<unknown>;
+  error: string | null;
+  loading: boolean;
+}) {
+  const [form, setForm] = useState({
+    name: org.name,
+    address: org.address ?? "",
+    adminName: org.adminName ?? "",
+    adminEmail: org.adminEmail ?? "",
+    plan: org.plan,
+    status: org.status,
+    expiryDate: org.expiry_date ?? "",
+    aiDailyQuota: org.ai_daily_quota,
+    paperCreditBalance: org.paper_credit_balance,
+    paperDailyLimit: org.paper_daily_limit,
+  });
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-lg"
+      >
+        <GlassCard className="max-h-[90vh] overflow-y-auto">
+          <h2 className="text-xl font-bold">Edit organization</h2>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const input: UpdateInput = {
+                organizationId: org.id,
+                name: form.name,
+                address: form.address,
+                plan: form.plan,
+                status: form.status,
+                expiryDate: form.expiryDate || null,
+                aiDailyQuota: form.aiDailyQuota,
+                paperCreditBalance: form.paperCreditBalance,
+                paperDailyLimit: form.paperDailyLimit,
+              };
+              if (form.adminEmail.trim()) input.adminEmail = form.adminEmail.trim();
+              if (form.adminName.trim()) input.adminName = form.adminName.trim();
+              try {
+                await onSubmit(input);
+              } catch {
+                // Mutation error is surfaced through the error prop.
+              }
+            }}
+            className="mt-4 space-y-3"
+          >
+            <TextField
+              label="Organization name"
+              value={form.name}
+              onChange={(v) => setForm({ ...form, name: v })}
+              required
+            />
+            <TextField
+              label="Contact email"
+              type="email"
+              value={form.adminEmail}
+              onChange={(v) => setForm({ ...form, adminEmail: v })}
+            />
+            <TextField
+              label="Admin name"
+              value={form.adminName}
+              onChange={(v) => setForm({ ...form, adminName: v })}
+            />
+            <TextField
+              label="Expiry date"
+              type="date"
+              value={form.expiryDate}
+              onChange={(v) => setForm({ ...form, expiryDate: v })}
+            />
+            <TextField
+              label="Address"
+              value={form.address}
+              onChange={(v) => setForm({ ...form, address: v })}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-sm font-medium">Plan</span>
+                <select
+                  value={form.plan}
+                  onChange={(e) => setForm({ ...form, plan: e.target.value as OrgPlan })}
+                  className="mt-1 w-full rounded-lg border border-border bg-input px-3 py-2 text-sm"
+                >
+                  <option value="free">Free</option>
+                  <option value="basic">Basic</option>
+                  <option value="pro">Pro</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-sm font-medium">Status</span>
+                <select
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value as OrgStatus })}
+                  className="mt-1 w-full rounded-lg border border-border bg-input px-3 py-2 text-sm"
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="suspended">Suspended</option>
+                </select>
+              </label>
+            </div>
+            <label className="block">
+              <span className="text-sm font-medium">Daily AI quota</span>
+              <input
+                type="number"
+                min={0}
+                value={form.aiDailyQuota}
+                onChange={(e) => setForm({ ...form, aiDailyQuota: Number(e.target.value) })}
+                className="mt-1 w-full rounded-lg border border-border bg-input px-3 py-2 text-sm"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-sm font-medium">Paper credits</span>
+                <input
+                  type="number"
+                  min={0}
+                  placeholder="Unlimited"
+                  value={form.paperCreditBalance ?? ""}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      paperCreditBalance: e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
+                  className="mt-1 w-full rounded-lg border border-border bg-input px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="block">
+                <span className="text-sm font-medium">Paper limit/day</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.paperDailyLimit}
+                  onChange={(e) => setForm({ ...form, paperDailyLimit: Number(e.target.value) })}
+                  className="mt-1 w-full rounded-lg border border-border bg-input px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+            {error && (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </p>
+            )}
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 rounded-lg border border-border bg-card/50 px-4 py-2 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+              >
+                {loading ? "Saving…" : "Save changes"}
+              </button>
+            </div>
+          </form>
+        </GlassCard>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function DeleteOrgModal({
+  org,
+  onClose,
+  onConfirm,
+  error,
+  loading,
+}: {
+  org: OrgRow;
+  onClose: () => void;
+  onConfirm: () => Promise<unknown>;
+  error: string | null;
+  loading: boolean;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md"
+      >
+        <GlassCard>
+          <h2 className="text-lg font-bold">Delete organization</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Are you sure you want to delete <span className="font-medium">{org.name}</span>? This
+            permanently removes its papers, exams, credits, and admin accounts.
+          </p>
+          {error && (
+            <p className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <div className="mt-5 flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 rounded-lg border border-border bg-card/50 px-4 py-2 text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={async () => {
+                try {
+                  await onConfirm();
+                } catch {
+                  // Mutation error is surfaced through the error prop.
+                }
+              }}
+              className="flex-1 rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground disabled:opacity-60"
+            >
+              {loading ? "Deleting…" : "Delete organization"}
+            </button>
+          </div>
         </GlassCard>
       </motion.div>
     </motion.div>
